@@ -4,3 +4,6 @@ qrcode
 openpyxl
 gspread
 google-auth
+google-oauth2-client
+gunicorn
+werkzeug
