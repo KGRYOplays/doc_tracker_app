@@ -1,0 +1,1499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Barcode Generator & Document Tracker</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --secondary: #a855f7;
+            --accent: #ec4899;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            --glass-bg: rgba(30, 41, 59, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --glass-highlight: rgba(255, 255, 255, 0.03);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --radius-lg: 20px;
+            --radius-md: 12px;
+            --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            min-height: 100vh;
+            overflow-x: hidden;
+            line-height: 1.5;
+        }
+
+        .background-glows {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: -1;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .glow-1 {
+            position: absolute;
+            top: -20%;
+            left: -10%;
+            width: 60vw;
+            height: 60vw;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, transparent 70%);
+            filter: blur(80px);
+        }
+
+        .glow-2 {
+            position: absolute;
+            bottom: -20%;
+            right: -10%;
+            width: 60vw;
+            height: 60vw;
+            background: radial-gradient(circle, rgba(168, 85, 247, 0.15) 0%, transparent 70%);
+            filter: blur(80px);
+        }
+
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        /* HEADER */
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 3rem;
+            font-weight: 800;
+            background: linear-gradient(to right, #ffffff, #c084fc, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+            letter-spacing: -0.02em;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            font-weight: 400;
+        }
+
+        /* NAVIGATION TABS */
+        .nav-tabs {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 35px;
+            background: var(--glass-bg);
+            padding: 8px;
+            border-radius: 40px;
+            border: 1px solid var(--glass-border);
+            backdrop-filter: blur(20px);
+            max-width: fit-content;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .tab-link {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 12px 24px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 30px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .tab-link:hover {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .tab-link.active {
+            color: var(--text-main);
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+        }
+
+        .nav-btn-scanner {
+            background: linear-gradient(135deg, #10b981, #059669) !important;
+            color: white !important;
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3) !important;
+            text-decoration: none;
+            border-radius: 30px;
+            padding: 12px 24px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s ease;
+        }
+        
+        .nav-btn-scanner:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4) !important;
+        }
+
+        /* CARD STYLE */
+        .glass-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-lg);
+            padding: 35px;
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(20px);
+            margin-bottom: 30px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.15), transparent);
+        }
+
+        .card-title-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 25px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding-bottom: 15px;
+        }
+
+        .card-icon {
+            width: 44px;
+            height: 44px;
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: var(--primary);
+        }
+
+        .card-title-row h2 {
+            font-size: 1.4rem;
+            font-weight: 700;
+        }
+
+        /* GRID LAYOUTS */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 30px;
+        }
+
+        /* FORMS */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        select, input, textarea {
+            width: 100%;
+            padding: 14px 18px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-md);
+            color: var(--text-main);
+            font-size: 1rem;
+            font-family: inherit;
+            transition: all 0.3s ease;
+        }
+
+        select:focus, input:focus, textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            background: rgba(15, 23, 42, 0.8);
+            box-shadow: 0 0 15px rgba(99, 102, 241, 0.25);
+        }
+
+        select option {
+            background: #1e293b;
+            color: var(--text-main);
+        }
+
+        .or-divider {
+            text-align: center;
+            position: relative;
+            margin: 25px 0;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .or-divider::before, .or-divider::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 45%;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.08);
+        }
+        .or-divider::before { left: 0; }
+        .or-divider::after { right: 0; }
+
+        /* BUTTONS */
+        .btn {
+            padding: 15px 28px;
+            border: none;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 700;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            width: 100%;
+            text-decoration: none;
+        }
+
+        .btn-add {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+            color: var(--warning);
+        }
+
+        .btn-add:hover {
+            background: var(--warning);
+            color: #0f172a;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.2);
+        }
+
+        .btn-generate {
+            background: linear-gradient(135deg, var(--success), #059669);
+            color: white;
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.25);
+        }
+
+        .btn-generate:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.25);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--glass-border);
+            color: var(--text-main);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        /* SCROLLABLE EMP LIST */
+        .list-container {
+            background: rgba(15, 23, 42, 0.4);
+            border-radius: var(--radius-md);
+            padding: 20px;
+            margin-top: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .list-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .count-badge {
+            background: var(--accent);
+            color: white;
+            padding: 3px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 700;
+        }
+
+        #employee_list {
+            list-style: none;
+            max-height: 250px;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+
+        #employee_list::-webkit-scrollbar {
+            width: 6px;
+        }
+        #employee_list::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        #employee_list li {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .emp-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .emp-badge {
+            background: rgba(99, 102, 241, 0.2);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            color: #a5b4fc;
+            padding: 2px 10px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .remove-btn {
+            cursor: pointer;
+            color: var(--error);
+            font-weight: bold;
+            font-size: 1.2rem;
+            transition: transform 0.2s ease;
+        }
+        .remove-btn:hover {
+            transform: scale(1.2);
+        }
+
+        .empty-list {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 30px 0;
+            font-style: italic;
+        }
+
+        /* DYNAMIC TABS PANEL */
+        .tab-panel {
+            display: none;
+        }
+
+        .tab-panel.active {
+            display: block;
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* GENERATED RESULT */
+        #qr_result {
+            margin-top: 25px;
+            text-align: center;
+            padding: 30px;
+            background: rgba(15, 23, 42, 0.4);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-lg);
+            display: none;
+        }
+        
+        #qr_result.active {
+            display: block;
+            animation: expand 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+        }
+
+        @keyframes expand {
+            from { transform: scale(0.9); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+
+        #qr_result img {
+            border: 5px solid white;
+            border-radius: var(--radius-md);
+            max-width: 250px;
+            box-shadow: var(--shadow);
+            background: white;
+            margin-bottom: 20px;
+        }
+
+        .qr-success {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--success);
+            margin-bottom: 15px;
+        }
+
+        .btn-add-sheet {
+            background: linear-gradient(135deg, var(--secondary), var(--accent));
+            color: white;
+            box-shadow: 0 4px 15px rgba(168, 85, 247, 0.25);
+            margin-bottom: 10px;
+        }
+
+        /* PRINT SHEET GRID */
+        .sheet-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 25px;
+        }
+
+        .sheet-item {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: var(--radius-md);
+            padding: 15px;
+            text-align: center;
+            position: relative;
+            color: #0f172a;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+
+        .sheet-item img {
+            max-width: 100%;
+            height: auto;
+            margin-bottom: 10px;
+        }
+
+        .sheet-code {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700;
+            font-size: 1.1rem;
+            letter-spacing: 0.05em;
+        }
+
+        .sheet-remove {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--error);
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            transition: transform 0.2s ease;
+        }
+        .sheet-remove:hover {
+            transform: scale(1.1);
+        }
+
+        /* SEARCHABLE DATATABLE */
+        .table-actions {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .search-wrapper {
+            flex: 1;
+            min-width: 250px;
+            position: relative;
+        }
+
+        .search-wrapper input {
+            padding-left: 45px;
+        }
+
+        .search-wrapper::before {
+            content: '🔍';
+            position: absolute;
+            left: 18px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 1rem;
+            opacity: 0.6;
+        }
+
+        .table-container {
+            width: 100%;
+            overflow-x: auto;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--glass-border);
+            background: rgba(15, 23, 42, 0.4);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.95rem;
+        }
+
+        th {
+            background: rgba(99, 102, 241, 0.1);
+            color: #a5b4fc;
+            padding: 15px 20px;
+            font-weight: 600;
+            border-bottom: 1.5px solid var(--glass-border);
+            text-transform: uppercase;
+            font-size: 0.8rem;
+            letter-spacing: 0.05em;
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 14px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            white-space: nowrap;
+        }
+
+        tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .table-code {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700;
+            color: var(--secondary);
+            background: rgba(168, 85, 247, 0.1);
+            border: 1px solid rgba(168, 85, 247, 0.2);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .table-office-badge {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: var(--success);
+            padding: 4px 10px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            display: inline-block;
+        }
+
+        .table-time {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        /* SETTINGS */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 25px;
+            padding: 15px 20px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-md);
+        }
+
+        .toggle-label {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(255, 255, 255, 0.1);
+            transition: .4s;
+            border-radius: 34px;
+            border: 1px solid var(--glass-border);
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--success);
+        }
+
+        input:focus + .slider {
+            box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+
+        /* ALERTS */
+        .alert {
+            padding: 15px 20px;
+            border-radius: var(--radius-md);
+            margin-bottom: 20px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from { transform: translateY(-10px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .alert-success {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid var(--success);
+            color: #34d399;
+        }
+
+        .alert-error {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid var(--error);
+            color: #f87171;
+        }
+
+        .alert-info {
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid var(--primary);
+            color: #818cf8;
+        }
+
+        /* PRINT MEDIA STYLING */
+        @media print {
+            body * {
+                visibility: hidden;
+            }
+            .sheet-grid, .sheet-grid * {
+                visibility: visible;
+            }
+            .sheet-grid {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                display: grid !important;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 15px;
+                padding: 15px;
+                background: white;
+            }
+            .sheet-item {
+                border: 2px solid black !important;
+                page-break-inside: avoid;
+                background: white !important;
+                box-shadow: none !important;
+            }
+            .sheet-remove, .no-print {
+                display: none !important;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="background-glows">
+        <div class="glow-1"></div>
+        <div class="glow-2"></div>
+    </div>
+
+    <div class="container">
+        <header>
+            <h1>🏢 Document Routing & Scanning Dashboard</h1>
+            <p class="subtitle">Generate tracking barcodes and monitor document routing histories</p>
+        </header>
+
+        <!-- NAVIGATION -->
+        <div class="nav-tabs no-print">
+            <button class="tab-link active" onclick="switchTab('tab-dashboard')">📊 Overview</button>
+            <button class="tab-link" onclick="switchTab('tab-generator')">🏷️ Code Generator</button>
+            <button class="tab-link" onclick="switchTab('tab-records')">📋 Routing Records</button>
+            <button class="tab-link" onclick="switchTab('tab-settings')">⚙️ Google Sheets Settings</button>
+            <a href="/scanner" class="nav-btn-scanner">📷 Launch Scanner Screen →</a>
+        </div>
+
+        <div id="alert-container" class="no-print"></div>
+
+        <!-- TAB 1: OVERVIEW -->
+        <div id="tab-dashboard" class="tab-panel active">
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">📊</div>
+                    <h2>Quick Database Summary</h2>
+                </div>
+                <div class="grid-2">
+                    <div style="background: rgba(255,255,255,0.02); border:1px solid var(--glass-border); padding:25px; border-radius:var(--radius-md); text-align:center;">
+                        <h3 style="color:var(--text-muted); font-size:1rem; text-transform:uppercase; margin-bottom:10px;">Total Barcodes Generated</h3>
+                        <p id="stat-total-barcodes" style="font-size:3rem; font-weight:800; color:var(--primary);">0</p>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.02); border:1px solid var(--glass-border); padding:25px; border-radius:var(--radius-md); text-align:center;">
+                        <h3 style="color:var(--text-muted); font-size:1rem; text-transform:uppercase; margin-bottom:10px;">Employees Under Tracking</h3>
+                        <p id="stat-total-employees" style="font-size:3rem; font-weight:800; color:var(--secondary);">0</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">⚡</div>
+                    <h2>Quick Start Actions</h2>
+                </div>
+                <p style="color:var(--text-muted); margin-bottom:20px;">Use the navigation menu above to access details or run a barcode setup. Keep the local folder structure intact to sync `routing_record.xlsx` perfectly in real time!</p>
+                <div style="display:flex; gap:15px; flex-wrap:wrap;">
+                    <button class="btn btn-primary" onclick="switchTab('tab-generator')" style="width:auto;">➕ Generate New Barcodes</button>
+                    <a href="/scanner" class="btn btn-secondary" style="width:auto;">📷 Run Scanner Screen</a>
+                    <button class="btn btn-secondary" onclick="reloadFromExcel()" style="width:auto;">🔄 Reload from Excel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 2: CODE GENERATOR -->
+        <div id="tab-generator" class="tab-panel">
+            <div class="grid-2">
+                <!-- FORM BLOCK -->
+                <div class="glass-card">
+                    <div class="card-title-row">
+                        <div class="card-icon">👥</div>
+                        <h2>Create Employee Batch</h2>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Select Department</label>
+                        <select id="deptSelect" onchange="loadSchools()">
+                            <option value="">-- Select Department --</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Select School / Office</label>
+                        <input type="text" id="schoolInput" list="schoolsListGenerator" oninput="onSchoolInput()" placeholder="Type or select school/office...">
+                        <datalist id="schoolsListGenerator"></datalist>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Select Employee</label>
+                        <input type="text" id="employeeInput" list="employeesListGenerator" placeholder="Type or select employee...">
+                        <datalist id="employeesListGenerator"></datalist>
+                    </div>
+
+                    <div class="or-divider">— OR REGISTER NEW —</div>
+
+                    <div class="form-group">
+                        <label>Custom Employee Name</label>
+                        <input type="text" id="newEmpName" placeholder="Enter name...">
+                    </div>
+
+                    <button class="btn btn-add" onclick="addToList()">➕ Add Employee to List</button>
+
+                    <div class="list-container">
+                        <div class="list-header-row">
+                            <strong>Ready to Code Batch</strong>
+                            <span id="listCount" class="count-badge">0</span>
+                        </div>
+                        <ul id="employee_list">
+                            <li class="empty-list">Add employees to compile list...</li>
+                        </ul>
+                        <button class="btn btn-secondary" onclick="clearList()" style="margin-top:10px; padding:8px 15px; font-size:0.9rem;">Clear Batch</button>
+                    </div>
+                </div>
+
+                <!-- GENERATE CONTROLS -->
+                <div class="glass-card">
+                    <div class="card-title-row">
+                        <div class="card-icon">🎨</div>
+                        <h2>Generate Settings</h2>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Display Format</label>
+                        <div style="display:flex; gap:10px;">
+                            <button id="btn-barcode" class="btn btn-primary" onclick="setCodeType('barcode')" style="flex:1;">Barcode (Linear)</button>
+                            <button id="btn-qr" class="btn btn-secondary" onclick="setCodeType('qr')" style="flex:1;">QR Code</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Document Description / Type</label>
+                        <input type="text" id="docType" placeholder="e.g. Service Records, Contract, Clearance">
+                    </div>
+
+                    <button class="btn btn-generate" onclick="generateCode()" style="margin-top:10px;">⚡ Compile & Generate Code</button>
+
+                    <div id="qr_result">
+                        <div class="qr-success">🎉 Code Created Successfully!</div>
+                        <img id="codeImage" src="" alt="Code Result">
+                        <p style="font-family:'JetBrains Mono', monospace; font-size:1.2rem; font-weight:700; margin-bottom:20px;" id="codeText"></p>
+                        <button class="btn btn-add-sheet" onclick="addToPrintSheet()">➕ Add to Sheet Layout</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PRINT CARDS SHEET -->
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">🖨️</div>
+                    <h2>Barcode Print Sheet Layout (<span id="sheetCount">0</span> codes)</h2>
+                </div>
+                <div class="table-actions no-print">
+                    <button class="btn btn-primary" onclick="printSheet()" style="width:auto;">🖨️ Print Layout Sheet</button>
+                    <button class="btn btn-secondary" onclick="clearSheet()" style="width:auto;">🗑️ Clear All Barcodes</button>
+                </div>
+                <div class="sheet-grid" id="sheetGrid">
+                    <div class="empty-list" style="grid-column: span 10; text-align: center; width: 100%;">No barcodes added to print sheet yet.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 3: ROUTING RECORDS -->
+        <div id="tab-records" class="tab-panel">
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">📋</div>
+                    <h2>Complete Document Routing Log</h2>
+                </div>
+
+                <div class="table-actions">
+                    <div class="search-wrapper">
+                        <input type="text" id="tableSearch" onkeyup="filterTable()" placeholder="Search employee, department, code, or receiving office...">
+                    </div>
+                    <button class="btn btn-secondary" onclick="loadRoutingRecords()" style="width:auto; height: 50px;">🔄 Refresh Table</button>
+                </div>
+
+                <div class="table-container">
+                    <table id="recordsTable">
+                        <thead>
+                            <tr id="recordsTableHeaders">
+                                <th>Department</th>
+                                <th>School/Office (Origin)</th>
+                                <th>Employee</th>
+                                <th>Barcode Code</th>
+                                <th>Receiving Office 1</th>
+                                <th>Timestamp 1</th>
+                                <th>Receiving Office 2</th>
+                                <th>Timestamp 2</th>
+                                <th>Receiving Office 3</th>
+                                <th>Timestamp 3</th>
+                                <th>Receiving Office 4</th>
+                                <th>Timestamp 4</th>
+                                <th>Receiving Office 5</th>
+                                <th>Timestamp 5</th>
+                                <th>Receiving Office 6</th>
+                                <th>Timestamp 6</th>
+                                <th>Receiving Office 7</th>
+                                <th>Timestamp 7</th>
+                                <th>Receiving Office 8</th>
+                                <th>Timestamp 8</th>
+                                <th>Receiving Office 9</th>
+                                <th>Timestamp 9</th>
+                                <th>Receiving Office 10</th>
+                                <th>Timestamp 10</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recordsTableBody">
+                            <tr>
+                                <td colspan="24" class="empty-list" style="text-align:center;">Loading routing data...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 4: SETTINGS -->
+        <div id="tab-settings" class="tab-panel">
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">⚙️</div>
+                    <h2>Google Sheets Integration Options</h2>
+                </div>
+
+                <div class="toggle-container">
+                    <span class="toggle-label">Activate Live Google Sheets Sync</span>
+                    <label class="switch">
+                        <input type="checkbox" id="gsheets_enabled">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label>Google Sheet ID</label>
+                    <input type="text" id="gsheets_id" placeholder="e.g. 1a2b3c4d5e6f7g8h9i...">
+                    <small style="color:var(--text-muted); display:block; margin-top:5px;">This is the unique ID found in your Google Sheet's URL between '/d/' and '/edit'</small>
+                </div>
+
+                <div class="form-group">
+                    <label>Google Service Account Credentials JSON</label>
+                    <textarea id="gsheets_credentials" rows="8" style="font-family:'JetBrains Mono', monospace; font-size:0.85rem;" placeholder='{ "type": "service_account", "project_id": ... }'></textarea>
+                    <small style="color:var(--text-muted); display:block; margin-top:5px;">Paste the entire contents of your Google Service Account credential JSON file here.</small>
+                </div>
+
+                <div style="display:flex; gap:15px; margin-top:20px;">
+                    <button class="btn btn-secondary" onclick="testSheetConnection()" style="flex:1;">🔌 Test Sheet Connection & Format Headers</button>
+                    <button class="btn btn-primary" onclick="saveSettings()" style="flex:1;">💾 Save Configuration</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var addedEmployees = [];
+        var codeType = 'barcode';
+        var printSheetData = [];
+        var currentCode = '';
+        var currentImage = '';
+
+        window.onload = function() {
+            loadDepartments();
+            loadRoutingRecords();
+            loadSettings();
+        };
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
+            
+            document.getElementById(tabId).classList.add('active');
+            
+            // Find link matching onlick
+            document.querySelectorAll('.tab-link').forEach(l => {
+                if (l.getAttribute('onclick').includes(tabId)) {
+                    l.classList.add('active');
+                }
+            });
+
+            if (tabId === 'tab-records') {
+                loadRoutingRecords();
+            }
+        }
+
+        function setCodeType(type) {
+            codeType = type;
+            const btnBar = document.getElementById('btn-barcode');
+            const btnQr = document.getElementById('btn-qr');
+            if (type === 'barcode') {
+                btnBar.className = 'btn btn-primary';
+                btnQr.className = 'btn btn-secondary';
+            } else {
+                btnBar.className = 'btn btn-secondary';
+                btnQr.className = 'btn btn-primary';
+            }
+        }
+
+        function showAlert(type, message) {
+            const container = document.getElementById('alert-container');
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.innerHTML = `<span>${type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️'} ${message}</span>`;
+            container.appendChild(alert);
+            
+            setTimeout(() => {
+                alert.style.opacity = '0';
+                alert.style.transform = 'translateY(-10px)';
+                alert.style.transition = 'all 0.3s ease';
+                setTimeout(() => alert.remove(), 300);
+            }, 4000);
+        }
+
+        // --- APIS AND DROPDOWNS ---
+        function loadDepartments() {
+            fetch('/api/get_departments')
+            .then(res => res.json())
+            .then(data => {
+                var select = document.getElementById('deptSelect');
+                select.innerHTML = '<option value="">-- Select Department --</option>';
+                data.forEach(d => {
+                    var opt = document.createElement('option');
+                    opt.value = d;
+                    opt.text = d;
+                    select.appendChild(opt);
+                });
+            });
+        }
+
+        function loadSchools() {
+            var dept = document.getElementById('deptSelect').value;
+            if (!dept) return;
+            
+            // Clear inputs and datalists
+            document.getElementById('schoolInput').value = '';
+            document.getElementById('employeeInput').value = '';
+            var schoolsDatalist = document.getElementById('schoolsListGenerator');
+            schoolsDatalist.innerHTML = '';
+            document.getElementById('employeesListGenerator').innerHTML = '';
+            
+            fetch('/api/get_schools', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({department: dept})
+            })
+            .then(res => res.json())
+            .then(data => {
+                data.forEach(s => {
+                    var opt = document.createElement('option');
+                    opt.value = s;
+                    schoolsDatalist.appendChild(opt);
+                });
+            });
+        }
+
+        function onSchoolInput() {
+            var dept = document.getElementById('deptSelect').value;
+            var school = document.getElementById('schoolInput').value.trim();
+            if (!dept || !school) return;
+            
+            // Check if selected/typed school is in the datalist options to load employees
+            var options = Array.from(document.getElementById('schoolsListGenerator').options).map(o => o.value);
+            if (options.includes(school)) {
+                loadEmployees();
+            }
+        }
+
+        function loadEmployees() {
+            var dept = document.getElementById('deptSelect').value;
+            var school = document.getElementById('schoolInput').value.trim();
+            if (!dept || !school) return;
+            
+            document.getElementById('employeeInput').value = '';
+            var empDatalist = document.getElementById('employeesListGenerator');
+            empDatalist.innerHTML = '';
+            
+            fetch('/api/get_employees', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({department: dept, school: school})
+            })
+            .then(res => res.json())
+            .then(data => {
+                data.forEach(e => {
+                    var opt = document.createElement('option');
+                    opt.value = e;
+                    empDatalist.appendChild(opt);
+                });
+            });
+        }
+        function reloadFromExcel() {
+            fetch('/api/reload_excel', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showAlert('success', data.message);
+                    loadRoutingRecords(); // Refresh the table
+                    loadDepartments();     // Refresh dropdowns
+        } else {
+            showAlert('error', data.message);
+        }
+    });
+}
+        // --- BATCH BINDING LIST ---
+        function addToList() {
+            var dept = document.getElementById('deptSelect').value;
+            var school = document.getElementById('schoolInput').value.trim();
+            var emp = document.getElementById('employeeInput').value.trim();
+            var newEmp = document.getElementById('newEmpName').value.trim();
+            
+            var name = newEmp || emp;
+            if (!dept || !school || !name) {
+                showAlert('error', 'Please fill in all employee registration fields!');
+                return;
+            }
+            if (addedEmployees.some(e => e.name === name)) {
+                showAlert('info', 'Employee already added to this batch!');
+                return;
+            }
+
+            addedEmployees.push({department: dept, school: school, name: name});
+            document.getElementById('employeeInput').value = '';
+            document.getElementById('newEmpName').value = '';
+            updateListDisplay();
+        }
+
+        function updateListDisplay() {
+            var ul = document.getElementById('employee_list');
+            document.getElementById('listCount').innerText = addedEmployees.length;
+            
+            if (addedEmployees.length === 0) {
+                ul.innerHTML = '<li class="empty-list">Add employees to compile list...</li>';
+                return;
+            }
+            
+            ul.innerHTML = '';
+            addedEmployees.forEach((e, idx) => {
+                var li = document.createElement('li');
+                li.innerHTML = `
+                    <div class="emp-info">
+                        <span class="emp-badge">${e.school}</span>
+                        <strong>${e.name}</strong>
+                    </div>
+                    <span class="remove-btn" onclick="removeFromList(${idx})">✖</span>
+                `;
+                ul.appendChild(li);
+            });
+        }
+
+        function removeFromList(idx) {
+            addedEmployees.splice(idx, 1);
+            updateListDisplay();
+        }
+
+        function clearList() {
+            addedEmployees = [];
+            updateListDisplay();
+        }
+
+        // --- BARCODE/QR GENERATION ---
+        function generateCode() {
+            if (addedEmployees.length === 0) {
+                showAlert('error', 'Your employee batch is empty. Add employees first!');
+                return;
+            }
+            
+            var docType = document.getElementById('docType').value.trim();
+            if (!docType) {
+                showAlert('error', 'Please enter a Document Type / description.');
+                return;
+            }
+
+            var names = addedEmployees.map(e => e.name);
+            
+            var payload = {
+                department: addedEmployees[0].department,
+                school: addedEmployees[0].school,
+                doc_type: docType,
+                employees: names,
+                code_type: codeType
+            };
+
+            fetch('/generate_code', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    currentCode = data.code_display;
+                    currentImage = data.image_url;
+                    document.getElementById('codeImage').src = data.image_url;
+                    document.getElementById('codeText').innerText = 'CODE: ' + data.code_display;
+                    document.getElementById('qr_result').classList.add('active');
+                    showAlert('success', 'Document Barcode compiled successfully!');
+                    loadRoutingRecords(); // Refresh the list summaries
+                } else {
+                    showAlert('error', 'Generation failed: ' + data.message);
+                }
+            });
+        }
+
+        // --- PRINTING SHEET UTILITIES ---
+        function addToPrintSheet() {
+            if (!currentCode) return;
+            
+            var fullUrl = currentImage;
+            if (!fullUrl.startsWith('http')) {
+                fullUrl = window.location.origin + currentImage;
+            }
+            
+            if (printSheetData.some(p => p.code === currentCode)) {
+                showAlert('info', 'This barcode is already on the print layout.');
+                return;
+            }
+
+            printSheetData.push({
+                code: currentCode,
+                image: fullUrl
+            });
+            
+            updateSheetDisplay();
+            
+            document.getElementById('qr_result').classList.remove('active');
+            currentCode = '';
+            currentImage = '';
+            showAlert('success', 'Added to Print Sheet.');
+        }
+
+        function updateSheetDisplay() {
+            var grid = document.getElementById('sheetGrid');
+            document.getElementById('sheetCount').innerText = printSheetData.length;
+            
+            if (printSheetData.length === 0) {
+                grid.innerHTML = '<div class="empty-list" style="grid-column: span 10; text-align: center; width: 100%;">No barcodes added to print sheet yet.</div>';
+                return;
+            }
+            
+            grid.innerHTML = '';
+            printSheetData.forEach((item, index) => {
+                var div = document.createElement('div');
+                div.className = 'sheet-item';
+                div.innerHTML = `
+                    <img src="${item.image}">
+                    <div class="sheet-code">${item.code}</div>
+                    <span class="sheet-remove" onclick="removeFromSheet(${index})">✖</span>
+                `;
+                grid.appendChild(div);
+            });
+        }
+
+        function removeFromSheet(index) {
+            printSheetData.splice(index, 1);
+            updateSheetDisplay();
+        }
+
+        function clearSheet() {
+            printSheetData = [];
+            updateSheetDisplay();
+        }
+
+        function printSheet() {
+            if (printSheetData.length === 0) {
+                showAlert('error', 'Add barcodes to print sheet layout first!');
+                return;
+            }
+            window.print();
+        }
+
+        // --- ROUTING DATATABLE FUNCTIONS ---
+        function loadRoutingRecords() {
+            fetch('/api/get_routing_records')
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // Update stats
+                    const totalBarcodes = new Set(data.records.map(r => r.code)).size;
+                    document.getElementById('stat-total-barcodes').innerText = totalBarcodes;
+                    document.getElementById('stat-total-employees').innerText = data.records.length;
+                    
+                    // Render Table rows
+                    renderRoutingTable(data.records);
+                } else {
+                    showAlert('error', 'Failed to retrieve records: ' + data.message);
+                }
+            });
+        }
+
+        function renderRoutingTable(records) {
+            const tbody = document.getElementById('recordsTableBody');
+            if (records.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="24" class="empty-list" style="text-align:center;">No tracking data logged yet. Open the scanning screen and record some routing stamps!</td></tr>';
+                return;
+            }
+            
+            // Dynamically determine maximum receiving office stage in returned records
+            let maxStage = 10;
+            records.forEach(r => {
+                Object.keys(r).forEach(k => {
+                    if (k.startsWith('receiving_office_')) {
+                        try {
+                            const num = parseInt(k.split('_').slice(-1)[0]);
+                            if (!isNaN(num) && num > maxStage) {
+                                maxStage = num;
+                            }
+                        } catch (err) {}
+                    }
+                });
+            });
+
+            // Dynamically update the table headers
+            const headersRow = document.getElementById('recordsTableHeaders');
+            let headerHtml = `
+                <th>Department</th>
+                <th>School/Office (Origin)</th>
+                <th>Employee</th>
+                <th>Barcode Code</th>
+            `;
+            for (let i = 1; i <= maxStage; i++) {
+                headerHtml += `
+                    <th>Receiving Office ${i}</th>
+                    <th>Timestamp ${i}</th>
+                `;
+            }
+            headersRow.innerHTML = headerHtml;
+            
+            tbody.innerHTML = '';
+            records.forEach(r => {
+                const tr = document.createElement('tr');
+                
+                // Base metadata
+                let html = `
+                    <td>${r.department || ""}</td>
+                    <td>${r.school_office || ""}</td>
+                    <td style="font-weight:700;">${r.employee || ""}</td>
+                    <td><span class="table-code">${r.code || ""}</span></td>
+                `;
+                
+                // Dynamic columns up to maxStage
+                for (let i = 1; i <= maxStage; i++) {
+                    const office = r[`receiving_office_${i}`] || "";
+                    const ts = r[`timestamp_${i}`] || "";
+                    
+                    html += `
+                        <td>${office ? `<span class="table-office-badge">${office}</span>` : ""}</td>
+                        <td class="table-time">${ts}</td>
+                    `;
+                }
+                
+                tr.innerHTML = html;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function filterTable() {
+            const query = document.getElementById('tableSearch').value.toLowerCase().trim();
+            const rows = document.querySelectorAll('#recordsTableBody tr');
+            
+            rows.forEach(row => {
+                let match = false;
+                row.querySelectorAll('td').forEach(cell => {
+                    if (cell.innerText.toLowerCase().includes(query)) {
+                        match = true;
+                    }
+                });
+                if (match) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
+
+        // --- CONFIGURATION SETTINGS ---
+        function loadSettings() {
+            fetch('/api/get_settings')
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    document.getElementById('gsheets_enabled').checked = data.gsheets_enabled;
+                    document.getElementById('gsheets_id').value = data.gsheets_id || "";
+                    document.getElementById('gsheets_credentials').value = data.gsheets_credentials || "";
+                }
+            });
+        }
+
+        function saveSettings() {
+            const enabled = document.getElementById('gsheets_enabled').checked;
+            const sheetId = document.getElementById('gsheets_id').value.trim();
+            const creds = document.getElementById('gsheets_credentials').value.trim();
+
+            fetch('/api/save_settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    gsheets_enabled: enabled,
+                    gsheets_id: sheetId,
+                    gsheets_credentials: creds
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showAlert('success', 'Google Sheet synchronization settings updated!');
+                } else {
+                    showAlert('error', 'Saving settings failed: ' + data.message);
+                }
+            });
+        }
+
+        function testSheetConnection() {
+            const sheetId = document.getElementById('gsheets_id').value.trim();
+            const creds = document.getElementById('gsheets_credentials').value.trim();
+
+            if (!sheetId || !creds) {
+                showAlert('error', 'Google Sheet ID and Credentials JSON content are required to execute connectivity test!');
+                return;
+            }
+
+            showAlert('info', 'Connecting to Google Sheets and preparing worksheet structure...');
+
+            fetch('/api/test_sheets', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    gsheets_id: sheetId,
+                    gsheets_credentials: creds
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showAlert('success', `Success! Connected to Spreadsheet: "${data.title}". Headers initialized.`);
+                } else {
+                    showAlert('error', 'Connectivity test failed: ' + data.message);
+                }
+            });
+        }
+    </script>
+</body>
+</html>

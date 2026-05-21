@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Barcode Routing Scanner</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --secondary: #a855f7;
+            --accent: #ec4899;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            --glass-bg: rgba(30, 41, 59, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --radius-lg: 20px;
+            --radius-md: 12px;
+            --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            min-height: 100vh;
+            overflow-x: hidden;
+            line-height: 1.5;
+        }
+
+        .background-glows {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: -1;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .glow-1 {
+            position: absolute;
+            top: -20%;
+            left: -10%;
+            width: 60vw;
+            height: 60vw;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, transparent 70%);
+            filter: blur(80px);
+        }
+
+        .glow-2 {
+            position: absolute;
+            bottom: -20%;
+            right: -10%;
+            width: 60vw;
+            height: 60vw;
+            background: radial-gradient(circle, rgba(168, 85, 247, 0.15) 0%, transparent 70%);
+            filter: blur(80px);
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        /* HEADER */
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: linear-gradient(to right, #ffffff, #c084fc, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+            letter-spacing: -0.02em;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1rem;
+        }
+
+        /* NAVIGATION BUTTONS */
+        .nav-center {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        .nav-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--glass-border);
+            color: var(--text-main);
+            padding: 12px 28px;
+            border-radius: 30px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .nav-btn:hover {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+        }
+
+        /* CARD STYLE */
+        .glass-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-lg);
+            padding: 30px;
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(20px);
+            margin-bottom: 25px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.15), transparent);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            gap: 15px;
+        }
+
+        .card-icon {
+            width: 44px;
+            height: 44px;
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: var(--primary);
+        }
+
+        .card-title {
+            font-size: 1.3rem;
+            color: var(--text-main);
+            font-weight: 700;
+        }
+
+        /* TABS */
+        .tab-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 25px;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 15px;
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            background: rgba(255, 255, 255, 0.02);
+            color: var(--text-muted);
+            transition: all 0.3s ease;
+        }
+
+        .tab-btn.active {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            border-color: transparent;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+        }
+
+        .tab-btn:hover:not(.active) {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-main);
+        }
+
+        /* SCANNER CONTAINER */
+        .scanner-container {
+            display: none;
+        }
+        
+        .scanner-container.active {
+            display: block;
+        }
+
+        .scanner-box {
+            background: rgba(15, 23, 42, 0.5);
+            border: 2px dashed rgba(99, 102, 241, 0.3);
+            border-radius: var(--radius-lg);
+            padding: 25px;
+            text-align: center;
+        }
+
+        .scanner-box h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: var(--text-main);
+        }
+
+        #reader {
+            width: 100%;
+            margin-top: 15px;
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            box-shadow: var(--shadow);
+        }
+
+        .physical-scanner-box {
+            background: rgba(15, 23, 42, 0.5);
+            border: 2px dashed rgba(99, 102, 241, 0.3);
+            border-radius: var(--radius-lg);
+            padding: 35px 25px;
+            text-align: center;
+        }
+
+        #barcodeInput {
+            width: 100%;
+            padding: 16px 20px;
+            font-size: 1.4rem;
+            text-align: center;
+            background: rgba(15, 23, 42, 0.8);
+            border: 2px solid var(--glass-border);
+            border-radius: var(--radius-md);
+            color: var(--text-main);
+            outline: none;
+            font-family: 'JetBrains Mono', monospace;
+            transition: all 0.3s ease;
+            margin-bottom: 15px;
+        }
+
+        #barcodeInput:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.35);
+        }
+
+        .hint {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        /* BUTTONS */
+        .btn {
+            padding: 15px 28px;
+            border: none;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 700;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            transition: all 0.3s ease;
+            width: 100%;
+        }
+
+        .btn-start {
+            background: linear-gradient(135deg, var(--success), #059669);
+            color: white;
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.25);
+        }
+        .btn-start:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+        }
+
+        .btn-stop {
+            background: linear-gradient(135deg, var(--error), #dc2626);
+            color: white;
+            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.25);
+            display: none;
+        }
+        .btn-stop:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
+        }
+
+        .btn-clear {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--glass-border);
+            color: var(--text-main);
+            width: auto;
+            padding: 10px 20px;
+            font-size: 0.9rem;
+        }
+        .btn-clear:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        /* STATUS / ALERTS */
+        #status_message {
+            margin-top: 20px;
+            padding: 15px 20px;
+            border-radius: var(--radius-md);
+            font-weight: 600;
+            text-align: center;
+            display: none;
+            animation: bounceIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes bounceIn {
+            0% { transform: scale(0.9); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        #status_message.success {
+            display: block;
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid var(--success);
+            color: #34d399;
+        }
+
+        #status_message.error {
+            display: block;
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid var(--error);
+            color: #f87171;
+        }
+
+        #status_message.warning {
+            display: block;
+            background: rgba(245, 158, 11, 0.15);
+            border: 1px solid var(--warning);
+            color: #fbbf24;
+        }
+
+        /* SEARCHABLE PICKER styling */
+        .picker-container {
+            margin-bottom: 25px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-lg);
+            padding: 25px;
+        }
+
+        .picker-container label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: 700;
+            color: #a5b4fc;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 0.05em;
+        }
+
+        .picker-input-wrapper {
+            position: relative;
+        }
+
+        .picker-input-wrapper input {
+            width: 100%;
+            padding: 16px 20px;
+            background: rgba(15, 23, 42, 0.7);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-md);
+            color: var(--text-main);
+            font-size: 1.1rem;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .picker-input-wrapper input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 15px rgba(99, 102, 241, 0.25);
+            background: rgba(15, 23, 42, 0.9);
+        }
+
+        /* SCANNED LOGS */
+        .list-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .list-header h2 {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--success);
+        }
+
+        .count-badge {
+            background: var(--accent);
+            color: white;
+            padding: 3px 12px;
+            border-radius: 20px;
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+
+        .scanned-list {
+            list-style: none;
+            max-height: 450px;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+
+        .scanned-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        .scanned-list::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        .scanned-list li {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--glass-border);
+            border-left: 5px solid var(--success);
+            padding: 20px;
+            margin-bottom: 12px;
+            border-radius: var(--radius-md);
+            animation: slideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .scanned-list li.warning-log {
+            border-left-color: var(--warning);
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(-20px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .scan-info-row {
+            margin-bottom: 5px;
+        }
+
+        .scan-info-row strong {
+            color: var(--text-main);
+            font-size: 1.1rem;
+        }
+
+        .scan-doc {
+            color: #a5b4fc;
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin-bottom: 5px;
+        }
+
+        .scan-employees {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            margin-bottom: 8px;
+            line-height: 1.4;
+        }
+
+        .scan-time {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .scan-badge-pill {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: var(--success);
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .empty-list {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 40px 0;
+            font-style: italic;
+        }
+
+        .shake {
+            animation: shake 0.3s ease;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-10px); }
+            40%, 80% { transform: translateX(10px); }
+        }
+        /* PIN GATE MODAL */
+        #pinGateOverlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(9, 11, 26, 0.97);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            backdrop-filter: blur(20px);
+        }
+        .pin-gate-box {
+            background: rgba(30, 41, 59, 0.9);
+            border: 1px solid rgba(99,102,241,0.3);
+            border-radius: 24px;
+            padding: 50px 45px;
+            text-align: center;
+            max-width: 420px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            animation: expand 0.4s cubic-bezier(0.18,0.89,0.32,1.28);
+        }
+        @keyframes expand {
+            from { transform: scale(0.85); opacity: 0; }
+            to   { transform: scale(1); opacity: 1; }
+        }
+        .pin-gate-icon { font-size: 3.5rem; margin-bottom: 16px; }
+        .pin-gate-box h2 { font-size: 1.7rem; font-weight: 800; margin-bottom: 6px; }
+        .pin-gate-box p  { color: var(--text-muted); margin-bottom: 28px; }
+        #pinInput {
+            width: 100%;
+            padding: 16px;
+            font-size: 1.8rem;
+            letter-spacing: 0.5em;
+            text-align: center;
+            background: rgba(15,23,42,0.8);
+            border: 2px solid rgba(99,102,241,0.3);
+            border-radius: 14px;
+            color: var(--text-main);
+            font-family: 'JetBrains Mono', monospace;
+            margin-bottom: 16px;
+            transition: all 0.3s;
+        }
+        #pinInput:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 20px rgba(99,102,241,0.3); }
+        #pinError {
+            color: var(--error);
+            font-weight: 600;
+            min-height: 22px;
+            margin-bottom: 12px;
+            font-size: 0.9rem;
+        }
+        .btn-pin-submit {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            border: none;
+            padding: 15px;
+            width: 100%;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn-pin-submit:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99,102,241,0.4); }
+        /* RECEIVER PICKER */
+        .receiver-name-wrapper { margin-top: 14px; }
+        .receiver-name-wrapper label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #a5b4fc;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ═══════════════ SCANNER PIN GATE ═══════════════ -->
+    <div id="pinGateOverlay">
+        <div class="pin-gate-box">
+            <div class="pin-gate-icon">🔐</div>
+            <h2>Scanner Access</h2>
+            <p>Enter your scanner PIN to continue</p>
+            <input type="password" id="pinInput" placeholder="····" maxlength="20"
+                   onkeypress="if(event.key==='Enter') submitPin()" autofocus>
+            <div id="pinError"></div>
+            <button class="btn-pin-submit" onclick="submitPin()">Unlock Scanner</button>
+        </div>
+    </div>
+
+    <div class="background-glows">
+        <div class="glow-1"></div>
+        <div class="glow-2"></div>
+    </div>
+
+    <div class="container" id="scannerContent" style="display:none;">
+        <header>
+            <h1>📷 Barcode &amp; QR Routing Scanner</h1>
+            <p class="subtitle">Assign receiving offices and route documents in real time</p>
+        </header>
+
+        <div class="nav-center">
+            <a href="/" class="nav-btn">← Back to Dashboard Generator</a>
+        </div>
+
+        <!-- SEARCHABLE OFFICE + RECEIVER PICKER -->
+        <div class="picker-container" id="officePickerCard">
+            <label for="receivingOffice">📍 Current Receiving Office</label>
+            <div class="picker-input-wrapper">
+                <input type="text" id="receivingOffice" list="schoolsList"
+                       placeholder="Type or select the receiving office...">
+                <datalist id="schoolsList"></datalist>
+            </div>
+            <div class="receiver-name-wrapper">
+                <label for="receiverName">👤 Receiver / Person Name <span style="font-weight:400;color:var(--text-muted);">(optional)</span></label>
+                <div class="picker-input-wrapper">
+                    <input type="text" id="receiverName" list="receiversList"
+                           placeholder="Who is receiving the document? (optional)">
+                    <datalist id="receiversList"></datalist>
+                </div>
+            </div>
+            <small style="color:var(--text-muted); display:block; margin-top:8px;">💡 Receiver name is optional — useful to track the exact person who signs for the document.</small>
+        </div>
+
+        <!-- SCANNERS -->
+        <div class="glass-card">
+            <div class="card-header">
+                <div class="card-icon">📸</div>
+                <h2 class="card-title">Scanning Mechanism</h2>
+            </div>
+
+            <div class="tab-buttons">
+                <button class="tab-btn active" id="tab-camera" onclick="showTab('camera')">📷 Integrated Camera Scanner</button>
+                <button class="tab-btn" id="tab-physical" onclick="showTab('physical')">🔫 USB / Laser POS Scanner</button>
+            </div>
+
+            <!-- Integrated Camera -->
+            <div id="cameraScanner" class="scanner-container active">
+                <div class="scanner-box">
+                    <h3>Point Camera at a Document Barcode or QR Code</h3>
+                    <div id="reader"></div>
+                    <div style="margin-top:20px;">
+                        <button id="startBtn" class="btn btn-start" onclick="startScanner()">📷 Activate Camera Feed</button>
+                        <button id="stopBtn" class="btn btn-stop" onclick="stopScanner()">⏹ Deactivate Camera Feed</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Physical Scanner -->
+            <div id="physicalScanner" class="scanner-container">
+                <div class="physical-scanner-box">
+                    <h3>🔫 Physical Laser / USB Barcode Scanner</h3>
+                    <p style="color:var(--text-muted); margin-bottom:20px;">Make sure your hardware scanner is connected. Select the box below, then scan.</p>
+                    <input type="text" id="barcodeInput" placeholder="Click here and scan..." autocomplete="off">
+                    <p class="hint">💡 Pos physical scanners will automatically type the code and press Enter.</p>
+                </div>
+            </div>
+
+            <div id="status_message"></div>
+        </div>
+
+        <!-- SCANNED LOGS -->
+        <div class="glass-card">
+            <div class="list-header">
+                <h2>✅ Logs Recorded This Session</h2>
+                <span id="total_count" class="count-badge">0</span>
+            </div>
+
+            <button class="btn btn-clear" onclick="clearSessionLogs()" style="margin-bottom:20px;">🗑️ Clear Session Log</button>
+            
+            <ul id="scanned_list" class="scanned-list">
+                <li class="empty-list">No scans tracked in this browser session. Select a receiving office and start scanning!</li>
+            </ul>
+        </div>
+    </div> <!-- end scannerContent -->
+
+    <script>
+        let html5QrcodeScanner;
+        let sessionLogs = [];
+        let recentScans = {}; // 5-second frontend rapid-trigger protection
+
+        // ── PIN GATE ──────────────────────────────────────────────────────────
+        function submitPin() {
+            const pin = document.getElementById('pinInput').value.trim();
+            if (!pin) return;
+            fetch('/api/verify_pin', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({pin_type: 'scanner', pin})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    document.getElementById('pinGateOverlay').style.display = 'none';
+                    document.getElementById('scannerContent').style.display = 'block';
+                    initScanner();
+                } else {
+                    const errEl = document.getElementById('pinError');
+                    errEl.textContent = data.message;
+                    const box = document.querySelector('.pin-gate-box');
+                    box.style.animation = 'none';
+                    box.style.borderColor = 'var(--error)';
+                    setTimeout(() => { box.style.borderColor = 'rgba(99,102,241,0.3)'; }, 1200);
+                    document.getElementById('pinInput').value = '';
+                }
+            })
+            .catch(() => {
+                document.getElementById('pinError').textContent = 'Network error. Is the server running?';
+            });
+        }
+
+        window.onload = function() {
+            // Check if already verified in this session
+            fetch('/api/check_auth')
+            .then(r => r.json())
+            .then(data => {
+                if (data.scanner_verified) {
+                    document.getElementById('pinGateOverlay').style.display = 'none';
+                    document.getElementById('scannerContent').style.display = 'block';
+                    initScanner();
+                }
+                // Otherwise PIN gate stays visible
+            })
+            .catch(() => {
+                // Server unreachable — keep gate
+            });
+        };
+
+        function initScanner() {
+            loadAllSchools();
+            loadAllReceivers();
+            const barcodeInp = document.getElementById('barcodeInput');
+            barcodeInp.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const text = this.value.trim();
+                    if (text) {
+                        processScannedData(text);
+                        this.value = '';
+                    }
+                }
+            });
+            barcodeInp.addEventListener('blur', function() {
+                if (document.getElementById('physicalScanner').classList.contains('active')) {
+                    setTimeout(() => this.focus(), 150);
+                }
+            });
+        }
+
+        // --- WEB AUDIO API CHIMES SYNTHESIS (Zero External File Dependencies) ---
+        function playSuccessChime() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                const osc1 = ctx.createOscillator();
+                const osc2 = ctx.createOscillator();
+                const gain = ctx.createGain();
+                
+                osc1.type = 'sine';
+                osc1.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+                osc1.frequency.setValueAtTime(880.00, ctx.currentTime + 0.08); // A5
+                
+                osc2.type = 'sine';
+                osc2.frequency.setValueAtTime(1174.66, ctx.currentTime + 0.08); // D6
+                
+                gain.gain.setValueAtTime(0.08, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+                
+                osc1.connect(gain);
+                osc2.connect(gain);
+                gain.connect(ctx.destination);
+                
+                osc1.start();
+                osc2.start();
+                osc1.stop(ctx.currentTime + 0.35);
+                osc2.stop(ctx.currentTime + 0.35);
+            } catch(e) {
+                console.log("Audio synthesis blocked/failed: ", e);
+            }
+        }
+
+        function playWarningBuzzer() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(130, ctx.currentTime); // Low buzz
+                osc.frequency.linearRampToValueAtTime(90, ctx.currentTime + 0.3);
+                
+                gain.gain.setValueAtTime(0.12, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                
+                osc.start();
+                osc.stop(ctx.currentTime + 0.3);
+            } catch(e) {
+                console.log("Audio synthesis blocked/failed: ", e);
+            }
+        }
+
+        // --- LOAD SEARCHABLE DROPDOWNS ---
+        function loadAllSchools() {
+            fetch('/api/get_all_schools')
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    const datalist = document.getElementById('schoolsList');
+                    datalist.innerHTML = '';
+                    data.schools.forEach(s => {
+                        const opt = document.createElement('option');
+                        opt.value = s;
+                        datalist.appendChild(opt);
+                    });
+                }
+            });
+        }
+
+        function loadAllReceivers() {
+            // Pre-populate receivers datalist from master DB (all employees across all schools)
+            // We reuse get_departments → get all schools → collect employees
+            // Simpler: just expose a flat list of all employees from master_db
+            fetch('/api/get_all_schools')
+            .then(r => r.json())
+            .then(data => {
+                if (data.status !== 'success') return;
+                // Fetch employees for each school in parallel
+                const promises = data.schools.map(school =>
+                    fetch('/api/get_all_school_employees', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({school})
+                    }).then(r => r.json())
+                );
+                Promise.all(promises).then(results => {
+                    const allNames = new Set();
+                    results.forEach(r => { if (r.status === 'success') r.employees.forEach(e => allNames.add(e)); });
+                    const dl = document.getElementById('receiversList');
+                    dl.innerHTML = '';
+                    [...allNames].sort().forEach(name => {
+                        const opt = document.createElement('option');
+                        opt.value = name;
+                        dl.appendChild(opt);
+                    });
+                });
+            });
+        }
+
+        // --- NAVIGATION TABS ---
+        function showTab(tab) {
+            document.getElementById('tab-camera').classList.remove('active');
+            document.getElementById('tab-physical').classList.remove('active');
+            document.getElementById('cameraScanner').classList.remove('active');
+            document.getElementById('physicalScanner').classList.remove('active');
+            
+            if (tab === 'camera') {
+                document.getElementById('tab-camera').classList.add('active');
+                document.getElementById('cameraScanner').classList.add('active');
+                stopScanner();
+            } else {
+                document.getElementById('tab-physical').classList.add('active');
+                document.getElementById('physicalScanner').classList.add('active');
+                stopScanner();
+                setTimeout(() => document.getElementById('barcodeInput').focus(), 150);
+            }
+        }
+
+        // --- CAMERA INTEGRATED SCANNER CONTROL ---
+        function startScanner() {
+            const office = document.getElementById('receivingOffice').value.trim();
+            if (!office) {
+                shakePicker();
+                alert('Please select or type a Current Receiving Office first!');
+                return;
+            }
+
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('stopBtn').style.display = 'block';
+            
+            html5QrcodeScanner = new Html5Qrcode("reader");
+            const config = { fps: 12, qrbox: { width: 280, height: 280 } };
+            html5QrcodeScanner.start({ facingMode: "environment" }, config, onScanSuccess);
+        }
+
+        function stopScanner() {
+            if (html5QrcodeScanner) {
+                html5QrcodeScanner.stop()
+                .then(() => {
+                    document.getElementById('startBtn').style.display = 'block';
+                    document.getElementById('stopBtn').style.display = 'none';
+                    document.getElementById('reader').innerHTML = "";
+                    html5QrcodeScanner = null;
+                })
+                .catch(err => {
+                    console.log("Error deactivating scanner: ", err);
+                    document.getElementById('startBtn').style.display = 'block';
+                    document.getElementById('stopBtn').style.display = 'none';
+                    document.getElementById('reader').innerHTML = "";
+                    html5QrcodeScanner = null;
+                });
+            }
+        }
+
+        function onScanSuccess(decodedText) {
+            processScannedData(decodedText);
+        }
+
+        // --- SCAN PROCESSING ENGINE ---
+        function processScannedData(code) {
+            code = code.trim().toUpperCase();
+            if (!code) return;
+
+            const office = document.getElementById('receivingOffice').value.trim();
+            if (!office) {
+                shakePicker();
+                playWarningBuzzer();
+                showStatusMessage('error', 'Select or enter a Current Receiving Office first!');
+                return;
+            }
+
+            // FRONTEND ACCIDENTAL RAPID RE-SCAN BLOCK (5-second debounce)
+            const now = Date.now();
+            if (recentScans[code] && (now - recentScans[code] < 5000)) {
+                console.log("Blocked rapid duplicate scan of code: ", code);
+                return; // Silently ignore rapid duplicate trigger to protect network/DB
+            }
+            recentScans[code] = now;
+
+            const receiverName = document.getElementById('receiverName').value.trim();
+
+            // Submit scanning event to server
+            fetch('/log_scan', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    scanned_data:     code,
+                    receiving_office: office,
+                    receiver_name:    receiverName
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    playSuccessChime();
+                    showStatusMessage('success', data.message);
+                    
+                    // Add details to Session Logs UI
+                    addSessionLog(data, false);
+                } else if (data.status === 'warning') {
+                    // Accident prevention backend matched
+                    playWarningBuzzer();
+                    showStatusMessage('warning', data.message);
+                    
+                    // Add to session list as warning log
+                    addSessionLog({
+                        code: code,
+                        message: data.message,
+                        timestamp: new Date().toLocaleTimeString()
+                    }, true);
+                    
+                    shakeInput();
+                } else {
+                    playWarningBuzzer();
+                    showStatusMessage('error', data.message);
+                    shakeInput();
+                }
+            })
+            .catch(err => {
+                playWarningBuzzer();
+                showStatusMessage('error', 'Network error connecting to Flask server: ' + err);
+            });
+        }
+
+        function addSessionLog(data, isWarning) {
+            const ul = document.getElementById('scanned_list');
+            const empty = ul.querySelector('.empty-list');
+            if (empty) empty.remove();
+            
+            const li = document.createElement('li');
+            if (isWarning) {
+                li.className = 'warning-log';
+                li.innerHTML = `
+                    <div>
+                        <div class="scan-info-row"><strong>⚠️ Accidental Re-Scan Blocked</strong></div>
+                        <div class="scan-doc" style="color:var(--warning);">${data.message}</div>
+                        <div class="scan-time">TIME: ${data.timestamp} | CODE: ${data.code}</div>
+                    </div>
+                `;
+            } else {
+                li.innerHTML = `
+                    <div>
+                        <div class="scan-info-row">
+                            <strong>${data.school}</strong> 
+                            <span class="scan-badge-pill" style="margin-left:10px;">Route Stage ${data.slot}</span>
+                        </div>
+                        <div class="scan-doc">📄 Doc: ${data.doc_type}</div>
+                        <div class="scan-employees">👥 Tracks: ${data.data.join(', ')}</div>
+                        <div class="scan-time">Logged: ${data.timestamp} | Code: ${data.code_display || 'OK'}</div>
+                    </div>
+                `;
+            }
+
+            ul.insertBefore(li, ul.firstChild);
+            
+            // Increment Count
+            sessionLogs.push(data);
+            document.getElementById('total_count').innerText = sessionLogs.length;
+        }
+
+        function showStatusMessage(type, text) {
+            const div = document.getElementById('status_message');
+            div.className = type;
+            div.innerText = (type === 'success' ? '✅ ' : type === 'warning' ? '⚠️ ' : '❌ ') + text;
+            div.style.display = 'block';
+            
+            // Auto hide after 8 seconds
+            if (window.statusTimeout) clearTimeout(window.statusTimeout);
+            window.statusTimeout = setTimeout(() => {
+                div.style.display = 'none';
+            }, 8000);
+        }
+
+        // --- SHAKE FEEDBACKS ---
+        function shakePicker() {
+            const picker = document.getElementById('officePickerCard');
+            picker.classList.add('shake');
+            setTimeout(() => picker.classList.remove('shake'), 400);
+        }
+
+        function shakeInput() {
+            const inp = document.getElementById('barcodeInput');
+            if (inp && document.getElementById('physicalScanner').classList.contains('active')) {
+                inp.classList.add('shake');
+                setTimeout(() => inp.classList.remove('shake'), 400);
+            }
+        }
+
+        function clearSessionLogs() {
+            sessionLogs = [];
+            document.getElementById('total_count').innerText = '0';
+            const ul = document.getElementById('scanned_list');
+            ul.innerHTML = '<li class="empty-list">No scans tracked in this browser session. Select a receiving office and start scanning!</li>';
+            document.getElementById('status_message').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
