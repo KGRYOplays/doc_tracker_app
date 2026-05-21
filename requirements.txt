@@ -6,4 +6,3 @@ gspread
 google-auth
 werkzeug
 Pillow
-JsBarcode
