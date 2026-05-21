@@ -4,7 +4,7 @@ qrcode
 openpyxl
 gspread
 google-auth
-google-auth-oauth2-client
 gunicorn
 werkzeug
 Pillow
+JsBarcode
