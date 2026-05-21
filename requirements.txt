@@ -1,0 +1,6 @@
+flask
+pandas
+qrcode
+openpyxl
+gspread
+google-auth
