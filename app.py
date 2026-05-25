@@ -1,11 +1,13 @@
 import os
+import io
 import pandas as pd
 import qrcode
 import random
 import string
 from datetime import datetime
 from functools import wraps
-from flask import Flask, render_template, request, jsonify, session
+from flask import Flask, render_template, request, jsonify, session, send_file
+from PIL import Image, ImageDraw, ImageFont
 
 import db_manager
 
@@ -94,6 +96,411 @@ def get_code_lookup(code):
         'employees':  row['employees'].split(','),
         'doc_type':   row['doc_type']
     }
+
+
+# ─────────────────────────────────────────────
+#  BARCODE / LABEL GENERATION HELPERS
+# ─────────────────────────────────────────────
+def generate_barcode_image(code):
+    """Generate a barcode PIL image with 1.5-inch width in a bordered box."""
+    from barcode import Code128
+    from barcode.writer import ImageWriter
+
+    # 1.5 inches = 144 pixels at 96 DPI (but we'll use 300 DPI for quality)
+    # Target: 1.5 inches ≈ 450 pixels at 300 DPI
+    DPI = 300
+    TARGET_W_INCHES = 1.5
+
+    # First pass: generate base barcode with custom writer options
+    writer_options = {
+        'module_width': 0.35,      # wider modules for readability
+        'module_height': 15.0,     # taller barcode
+        'font_size': 10,
+        'text_distance': 3,
+        'quiet_zone': 1.0,
+        'write_text': True,
+        'background': 'white',
+        'foreground': 'black',
+    }
+    
+    writer = ImageWriter()
+    barcode_obj = Code128(code, writer=writer)
+    
+    # Render to bytes first
+    buf = io.BytesIO()
+    barcode_obj.write(buf, writer_options)
+    buf.seek(0)
+    img = Image.open(buf).convert('RGB')
+    
+    # Resize to exactly 1.5 inches width at 300 DPI
+    target_px = int(TARGET_W_INCHES * DPI)
+    aspect = img.height / img.width
+    target_h = int(target_px * aspect)
+    img = img.resize((target_px, target_h), Image.LANCZOS)
+    
+    # Add border (box) around the barcode
+    border_px = 8
+    boxed_w = target_px + border_px * 2
+    boxed_h = target_h + border_px * 2 + 30  # extra space for code text below
+    boxed = Image.new('RGB', (boxed_w, boxed_h), 'white')
+    draw = ImageDraw.Draw(boxed)
+    
+    # Draw outer border box
+    draw.rectangle([0, 0, boxed_w - 1, boxed_h - 1], outline='black', width=2)
+    
+    # Paste barcode image centered in box
+    paste_x = (boxed_w - target_px) // 2
+    paste_y = border_px
+    boxed.paste(img, (paste_x, paste_y))
+    
+    # Add code text below the barcode
+    try:
+        font = ImageFont.truetype("arial.ttf", 18)
+    except:
+        font = ImageFont.load_default()
+    
+    text = f"CODE: {code}"
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_x = (boxed_w - text_w) // 2
+    text_y = boxed_h - 25
+    draw.text((text_x, text_y), text, fill='black', font=font)
+    
+    return boxed
+
+
+def generate_qr_image(code):
+    """Generate a QR code PIL image with 1.5-inch width in a bordered box."""
+    qr = qrcode.QRCode(version=1, box_size=10, border=2)
+    qr.add_data(code)
+    qr.make(fit=True)
+    img = qr.make_image(fill="black", back_color="white").convert('RGB')
+    
+    # Resize to 1.5 inches at 300 DPI
+    DPI = 300
+    TARGET_W_INCHES = 1.5
+    target_px = int(TARGET_W_INCHES * DPI)
+    aspect = img.height / img.width
+    target_h = int(target_px * aspect)
+    img = img.resize((target_px, target_h), Image.LANCZOS)
+    
+    # Add border box
+    border_px = 8
+    boxed_w = target_px + border_px * 2
+    boxed_h = target_h + border_px * 2 + 30
+    boxed = Image.new('RGB', (boxed_w, boxed_h), 'white')
+    draw = ImageDraw.Draw(boxed)
+    
+    draw.rectangle([0, 0, boxed_w - 1, boxed_h - 1], outline='black', width=2)
+    paste_x = (boxed_w - target_px) // 2
+    paste_y = border_px
+    boxed.paste(img, (paste_x, paste_y))
+    
+    try:
+        font = ImageFont.truetype("arial.ttf", 18)
+    except:
+        font = ImageFont.load_default()
+    
+    text = f"CODE: {code}"
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_x = (boxed_w - text_w) // 2
+    text_y = boxed_h - 25
+    draw.text((text_x, text_y), text, fill='black', font=font)
+    
+    return boxed
+
+
+def create_label_pdf(codes, doc_type='label', dpi=300, label_width_in=1.5):
+    """
+    Create a PDF with properly sized barcode labels (1.5 inches wide)
+    suitable for batch printing on sticker/label sheets.
+    """
+    from reportlab.lib.pagesizes import letter, A4
+    from reportlab.lib.units import inch, mm
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+    
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    
+    # Label dimensions
+    label_w = label_width_in * inch
+    label_h = label_w * 0.75  # 1.5 x 1.125 inch labels
+    margin_x = 0.5 * inch
+    margin_y = 0.5 * inch
+    gap = 0.15 * inch
+    
+    # Calculate labels per page
+    usable_w = letter[0] - 2 * margin_x
+    usable_h = letter[1] - 2 * margin_y
+    cols = int((usable_w + gap) / (label_w + gap))
+    rows = int((usable_h + gap) / (label_h + gap))
+    padding_x = (usable_w - (cols * label_w + (cols - 1) * gap)) / 2
+    padding_y = (usable_h - (rows * label_h + (rows - 1) * gap)) / 2
+    
+    for idx, item in enumerate(codes):
+        code = item.get('code', '')
+        img_type = item.get('type', 'barcode')
+        
+        if idx > 0 and idx % (cols * rows) == 0:
+            c.showPage()
+        
+        pos = idx % (cols * rows)
+        col = pos % cols
+        row = pos // cols
+        
+        x = margin_x + padding_x + col * (label_w + gap)
+        y = margin_y + padding_y + row * (label_h + gap)
+        
+        # Generate image
+        if img_type == 'qr':
+            pil_img = generate_qr_image(code)
+        else:
+            pil_img = generate_barcode_image(code)
+        
+        # Scale to fit within label area with small padding
+        img_w, img_h = pil_img.size
+        scale = min(label_w * 0.85 / img_w, label_h * 0.85 / img_h)
+        disp_w = img_w * scale
+        disp_h = img_h * scale
+        img_x = x + (label_w - disp_w) / 2
+        img_y = y + (label_h - disp_h) / 2
+        
+        temp_buf = io.BytesIO()
+        pil_img.save(temp_buf, format='PNG')
+        temp_buf.seek(0)
+        c.drawImage(ImageReader(temp_buf), img_x, img_y, width=disp_w, height=disp_h)
+        
+        # Draw label border outline (dashed)
+        c.setStrokeColorRGB(0.7, 0.7, 0.7)
+        c.setLineWidth(0.5)
+        c.rect(x, y, label_w, label_h)
+        c.setStrokeColorRGB(0, 0, 0)
+        c.setLineWidth(1)
+    
+    c.save()
+    buf.seek(0)
+    return buf
+
+
+def create_document_page_pdf(code, doc_type='barcode'):
+    """
+    Create a PDF with the barcode placed at the TOP RIGHT corner of a document.
+    The page looks like a formal document with header area.
+    """
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import inch
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.colors import HexColor
+    
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    width, height = letter  # 612 x 792 points
+    
+    # ── Generate the barcode image ──
+    if doc_type == 'qr':
+        pil_img = generate_qr_image(code)
+    else:
+        pil_img = generate_barcode_image(code)
+    
+    # Convert PIL to ImageReader
+    temp_buf = io.BytesIO()
+    pil_img.save(temp_buf, format='PNG')
+    temp_buf.seek(0)
+    
+    # ── Place barcode at TOP RIGHT corner ──
+    # Barcode target size: 1.5 inches wide on the page
+    target_w_inches = 1.5
+    target_w = target_w_inches * inch  # 108 points
+    aspect = pil_img.height / pil_img.width
+    target_h = target_w * aspect
+    
+    # Position: top right corner with 0.5 inch margins
+    margin = 0.5 * inch
+    barcode_x = width - margin - target_w
+    barcode_y = height - margin - target_h
+    
+    c.drawImage(ImageReader(temp_buf), barcode_x, barcode_y, width=target_w, height=target_h)
+    
+    # ── Document header / title ──
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(margin, height - 0.8 * inch, "DOCUMENT ROUTING SLIP")
+    
+    # ── Document info lines ──
+    c.setFont("Helvetica", 11)
+    y_pos = height - 1.3 * inch
+    c.drawString(margin, y_pos, f"Tracking Code: {code}")
+    
+    # Look up info if available
+    lookup = get_code_lookup(code)
+    if lookup:
+        y_pos -= 18
+        c.drawString(margin, y_pos, f"Department: {lookup['department']}")
+        y_pos -= 18
+        c.drawString(margin, y_pos, f"School/Office: {lookup['school']}")
+        y_pos -= 18
+        employees_str = ', '.join(lookup['employees'])
+        c.drawString(margin, y_pos, f"Employee(s): {employees_str}")
+        y_pos -= 18
+        c.drawString(margin, y_pos, f"Document Type: {lookup['doc_type']}")
+    
+    # ── Separator line ──
+    y_pos -= 20
+    c.setStrokeColor(HexColor('#6366f1'))
+    c.setLineWidth(1.5)
+    c.line(margin, y_pos, width - margin, y_pos)
+    
+    # ── Routing table header ──
+    y_pos -= 25
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(margin, y_pos, "ROUTING HISTORY")
+    
+    c.setFont("Helvetica-Bold", 9)
+    y_pos -= 18
+    table_margin = margin + 10
+    col_w = (width - 2 * table_margin) / 5
+    col_headers = ['#', 'Receiving Office', 'Receiver', 'Date/Time', 'Status']
+    
+    # Draw table headers
+    c.setFillColor(HexColor('#1e1b4b'))
+    for i, hdr in enumerate(col_headers):
+        c.drawString(table_margin + i * col_w + 5, y_pos, hdr)
+    
+    # Draw header underline
+    y_pos -= 3
+    c.setStrokeColorRGB(0.8, 0.8, 0.8)
+    c.line(table_margin, y_pos, width - table_margin, y_pos)
+    y_pos -= 12
+    
+    # ── Fetch routing data ──
+    try:
+        conn = db_manager.get_db_connection()
+        employees = lookup['employees'] if lookup else []
+        
+        # Collect routing records for this code
+        all_routes = {}
+        for emp in employees:
+            row = conn.execute(
+                "SELECT * FROM routing_records WHERE code = ? AND employee = ?", (code, emp)
+            ).fetchone()
+            if row:
+                office_cols = [c for c in row.keys() if c.startswith('receiving_office_')]
+                stages = sorted({int(c.split('_')[-1]) for c in office_cols if c.split('_')[-1].isdigit()})
+                for i in stages:
+                    office = row.get(f'receiving_office_{i}', '') or ''
+                    receiver = row.get(f'receiver_name_{i}', '') or ''
+                    ts = row.get(f'timestamp_{i}', '') or ''
+                    if office:
+                        if office not in all_routes:
+                            all_routes[office] = {'receiver': receiver, 'timestamp': ts, 'stage': i}
+        
+        conn.close()
+        
+        # Draw routing entries
+        c.setFont("Helvetica", 9)
+        c.setFillColorRGB(0.1, 0.1, 0.1)
+        for idx, (office, data) in enumerate(all_routes.items()):
+            if y_pos < 40:  # Don't go below page margin
+                c.showPage()
+                y_pos = height - margin
+                c.setFont("Helvetica", 9)
+            
+            row_data = [str(idx + 1), office, data['receiver'], data['timestamp'], '✓ Received']
+            for i, val in enumerate(row_data):
+                c.drawString(table_margin + i * col_w + 5, y_pos, str(val))
+            y_pos -= 16
+            
+            if idx < len(all_routes) - 1:
+                c.setStrokeColorRGB(0.9, 0.9, 0.9)
+                c.setLineWidth(0.5)
+                c.line(table_margin, y_pos + 8, width - table_margin, y_pos + 8)
+                c.setStrokeColorRGB(0, 0, 0)
+                c.setLineWidth(1)
+        
+        if not all_routes:
+            c.setFont("Helvetica-Oblique", 10)
+            c.setFillColorRGB(0.5, 0.5, 0.5)
+            c.drawString(table_margin, y_pos, "No routing history yet. Scan the barcode at receiving offices to track the document.")
+            c.setFillColorRGB(0.1, 0.1, 0.1)
+            
+    except Exception as e:
+        print(f"Error fetching routing data: {e}")
+    
+    c.save()
+    buf.seek(0)
+    return buf
+
+
+def create_barcode_overlay_pdf(code, doc_type='barcode', position='top-right', page_size='legal'):
+    """
+    Create a minimal PDF with ONLY the barcode image at the specified position.
+    No headers, no routing table - just the barcode on a blank page.
+    Useful for printing the barcode onto an already-printed document.
+    
+    Supported positions: top-right, top-left, bottom-right, bottom-left
+    Supported page sizes: legal (8.5x13), letter (8.5x11)
+    """
+    from reportlab.lib.pagesizes import letter, legal
+    from reportlab.lib.units import inch
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+    
+    if page_size == 'legal':
+        pagesize = legal
+    else:
+        pagesize = letter
+    
+    width, height = pagesize
+    
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=pagesize)
+    
+    if doc_type == 'qr':
+        pil_img = generate_qr_image(code)
+    else:
+        pil_img = generate_barcode_image(code)
+    
+    temp_buf = io.BytesIO()
+    pil_img.save(temp_buf, format='PNG')
+    temp_buf.seek(0)
+    
+    target_w_inches = 1.5
+    target_w = target_w_inches * inch
+    aspect = pil_img.height / pil_img.width
+    target_h = target_w * aspect
+    
+    margin = 0.5 * inch
+    
+    if position == 'top-right':
+        barcode_x = width - margin - target_w
+        barcode_y = height - margin - target_h
+    elif position == 'top-left':
+        barcode_x = margin
+        barcode_y = height - margin - target_h
+    elif position == 'bottom-right':
+        barcode_x = width - margin - target_w
+        barcode_y = margin
+    elif position == 'bottom-left':
+        barcode_x = margin
+        barcode_y = margin
+    else:
+        barcode_x = width - margin - target_w
+        barcode_y = height - margin - target_h
+    
+    c.drawImage(ImageReader(temp_buf), barcode_x, barcode_y, width=target_w, height=target_h)
+    
+    c.setFont("Helvetica", 8)
+    code_label = f"CODE: {code}"
+    code_label_w = c.stringWidth(code_label, "Helvetica", 8)
+    label_x = barcode_x + (target_w - code_label_w) / 2
+    label_y = barcode_y - 12
+    c.drawString(label_x, label_y, code_label)
+    
+    c.save()
+    buf.seek(0)
+    return buf
 
 
 # ─────────────────────────────────────────────
@@ -267,6 +674,107 @@ def generate_code():
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+
+# ─────────────────────────────────────────────
+#  BARCODE LABEL / DOCUMENT PDF ENDPOINTS
+# ─────────────────────────────────────────────
+
+@app.route('/api/label_image/<code>')
+def label_image(code):
+    """
+    Serve a PNG image of the barcode at 1.5-inch width with border box.
+    Query param: type=barcode|qr (default: barcode)
+    """
+    try:
+        img_type = request.args.get('type', 'barcode')
+        if img_type == 'qr':
+            img = generate_qr_image(code.upper())
+        else:
+            img = generate_barcode_image(code.upper())
+        
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        buf.seek(0)
+        return send_file(buf, mimetype='image/png')
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/document_page', methods=['POST'])
+def document_page():
+    """
+    Generate a PDF with barcode at TOP RIGHT corner.
+    Body: { "code": "...", "type": "barcode|qr" }
+    """
+    try:
+        data = request.json
+        code = data.get('code', '').strip().upper()
+        img_type = data.get('type', 'barcode')
+        
+        if not code:
+            return jsonify({'status': 'error', 'message': 'Code is required.'}), 400
+        
+        pdf_buf = create_document_page_pdf(code, img_type)
+        return send_file(
+            pdf_buf,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f"barcode_{code}.pdf"
+        )
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/batch_labels', methods=['POST'])
+def batch_labels():
+    """
+    Generate a PDF for batch printing multiple barcodes.
+    Body: { "codes": [{"code": "...", "type": "barcode|qr"}, ...] }
+    """
+    try:
+        data = request.json
+        codes = data.get('codes', [])
+        
+        if not codes:
+            return jsonify({'status': 'error', 'message': 'No codes provided.'}), 400
+        
+        pdf_buf = create_label_pdf(codes)
+        return send_file(
+            pdf_buf,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name='barcode_labels.pdf'
+        )
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/barcode_overlay', methods=['POST'])
+def barcode_overlay():
+    """
+    Generate a minimal overlay PDF with ONLY the barcode at the specified position.
+    Body: { "code": "...", "type": "barcode|qr", "position": "top-right|top-left|bottom-right|bottom-left", "page_size": "legal|letter" }
+    """
+    try:
+        data = request.json
+        code = data.get('code', '').strip().upper()
+        img_type = data.get('type', 'barcode')
+        position = data.get('position', 'top-right')
+        page_size = data.get('page_size', 'legal')
+        
+        if not code:
+            return jsonify({'status': 'error', 'message': 'Code is required.'}), 400
+        
+        pdf_buf = create_barcode_overlay_pdf(code, img_type, position, page_size)
+        return send_file(
+            pdf_buf,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f"barcode_overlay_{code}.pdf"
+        )
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 # ─────────────────────────────────────────────
@@ -510,13 +1018,15 @@ def delete_record(record_id):
 @require_admin
 def get_settings():
     try:
+        # Never expose the actual credentials to the frontend
+        has_creds = bool(db_manager.get_setting('gsheets_credentials', ''))
         return jsonify({
-            'status':              'success',
-            'gsheets_enabled':     db_manager.get_setting('gsheets_enabled', 'False') == 'True',
-            'gsheets_id':          db_manager.get_setting('gsheets_id', ''),
-            'gsheets_credentials': db_manager.get_setting('gsheets_credentials', ''),
-            'scanner_pin':         db_manager.get_setting('scanner_pin', 'scanner123'),
-            'admin_pin':           db_manager.get_setting('admin_pin', 'admin123'),
+            'status':               'success',
+            'gsheets_enabled':      db_manager.get_setting('gsheets_enabled', 'False') == 'True',
+            'gsheets_id':           db_manager.get_setting('gsheets_id', ''),
+            'gsheets_configured':   has_creds,
+            'scanner_pin':          db_manager.get_setting('scanner_pin', 'scanner123'),
+            'admin_pin':            db_manager.get_setting('admin_pin', 'admin123'),
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
@@ -528,8 +1038,11 @@ def save_settings():
     try:
         data = request.json
         db_manager.save_setting('gsheets_enabled', 'True' if data.get('gsheets_enabled') else 'False')
-        db_manager.save_setting('gsheets_id',          data.get('gsheets_id', '').strip())
-        db_manager.save_setting('gsheets_credentials', data.get('gsheets_credentials', '').strip())
+        db_manager.save_setting('gsheets_id', data.get('gsheets_id', '').strip())
+
+        if data.get('gsheets_credentials', '').strip():
+            # Use encrypted save - will validate JSON and encrypt
+            db_manager.save_encrypted_setting('gsheets_credentials', data['gsheets_credentials'].strip())
 
         if data.get('scanner_pin', '').strip():
             db_manager.save_setting('scanner_pin', data['scanner_pin'].strip())
@@ -537,6 +1050,8 @@ def save_settings():
             db_manager.save_setting('admin_pin', data['admin_pin'].strip())
 
         return jsonify({'status': 'success', 'message': 'Settings saved!'})
+    except ValueError as ve:
+        return jsonify({'status': 'error', 'message': str(ve)})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -569,11 +1084,37 @@ def gsheet_status():
     try:
         enabled  = db_manager.get_setting('gsheets_enabled', 'False')
         sheet_id = db_manager.get_setting('gsheets_id', '')
-        creds    = db_manager.get_setting('gsheets_credentials', '')
+        # Use decrypted credentials for the connection test
+        creds    = db_manager.get_decrypted_setting('gsheets_credentials')
         if enabled != 'True' or not sheet_id or not creds:
             return jsonify({'status': 'disabled', 'message': 'Google Sheets sync is not configured.'})
         result = db_manager.test_google_sheets_connection(sheet_id, creds)
         return jsonify(result)
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/api/bulk_sync', methods=['POST'])
+@require_admin
+def bulk_sync():
+    """Push ALL existing routing records to Google Sheets at once."""
+    try:
+        count, errors = db_manager.bulk_sync_to_gsheets()
+        if errors and count == 0:
+            return jsonify({
+                'status': 'error',
+                'message': f'Bulk sync failed: {errors[0][:200]}',
+                'errors': errors[:10]
+            })
+        msg = f'Synced {count} records to Google Sheets.'
+        if errors:
+            msg += f' {len(errors)} had errors (showing first 5): ' + '; '.join(errors[:5])
+        return jsonify({
+            'status': 'success' if not errors else 'partial',
+            'message': msg,
+            'synced': count,
+            'errors': errors[:10]
+        })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 

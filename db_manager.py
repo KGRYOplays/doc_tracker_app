@@ -1,10 +1,15 @@
 import os
+import json
+import base64
 import sqlite3
 import threading
 import queue
 import time
 from datetime import datetime
 import pandas as pd
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 # Files
 DB_FILE = 'app.db'
@@ -15,6 +20,75 @@ OLD_LOG_EXCEL = 'scan_log.xlsx'
 
 # Background Queue for Google Sheets Sync
 gs_sync_queue = queue.Queue()
+
+# ─────────────────────────────────────────────
+#  CREDENTIAL ENCRYPTION HELPERS
+# ─────────────────────────────────────────────
+
+def _get_encryption_key():
+    """Derive a Fernet encryption key from the app's secret key."""
+    secret_key = os.environ.get('SECRET_KEY', 'barcode-routing-secret-2024-change-in-prod')
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=b'barcode_app_gsheets_salt_2024',
+        iterations=480000,
+    )
+    key = base64.urlsafe_b64encode(kdf.derive(secret_key.encode()))
+    return key
+
+
+def encrypt_credentials(plaintext_json):
+    """Encrypt Google service account credentials JSON for storage."""
+    if not plaintext_json:
+        return ''
+    f = Fernet(_get_encryption_key())
+    return f.encrypt(plaintext_json.encode()).decode()
+
+
+def decrypt_credentials(encrypted_value):
+    """Decrypt previously encrypted credentials. Returns empty string on failure."""
+    if not encrypted_value:
+        return ''
+    try:
+        f = Fernet(_get_encryption_key())
+        return f.decrypt(encrypted_value.encode()).decode()
+    except Exception:
+        # If decryption fails, assume it's already plaintext (legacy data)
+        return encrypted_value
+
+
+def get_decrypted_setting(key, default=None):
+    """Get a setting value, automatically decrypting 'gsheets_credentials'."""
+    value = get_setting(key, default)
+    if key == 'gsheets_credentials' and value:
+        decrypted = decrypt_credentials(value)
+        # Validate that it's actually JSON — if not, keep encrypted form
+        try:
+            json.loads(decrypted)
+            return decrypted
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return value
+
+
+def save_encrypted_setting(key, value):
+    """Save a setting, automatically encrypting 'gsheets_credentials'."""
+    if key == 'gsheets_credentials' and value:
+        # Validate it's valid JSON before encrypting
+        try:
+            parsed = json.loads(value)
+            required_fields = ['type', 'project_id', 'private_key', 'client_email']
+            missing = [f for f in required_fields if f not in parsed]
+            if missing:
+                raise ValueError(f"Missing required fields in credentials JSON: {', '.join(missing)}")
+        except json.JSONDecodeError:
+            raise ValueError("Credentials must be valid JSON")
+        encrypted = encrypt_credentials(value)
+        save_setting(key, encrypted)
+    else:
+        save_setting(key, value)
+
 
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE)
@@ -432,7 +506,8 @@ def start_gsheets_worker():
                     break
                 enabled  = get_setting('gsheets_enabled') == 'True'
                 sheet_id = get_setting('gsheets_id')
-                creds    = get_setting('gsheets_credentials')
+                # Use decrypted credentials for the worker
+                creds    = get_decrypted_setting('gsheets_credentials')
                 if enabled and sheet_id and creds:
                     try:
                         row_id = task.get('row_id')
@@ -458,6 +533,38 @@ def start_gsheets_worker():
 def queue_sync(row_id):
     """Queue a row update to the background Google Sheets worker."""
     gs_sync_queue.put({"row_id": row_id})
+
+
+def bulk_sync_to_gsheets():
+    """Push ALL existing routing records to Google Sheets. Returns (count, error_messages)."""
+    enabled = get_setting('gsheets_enabled') == 'True'
+    sheet_id = get_setting('gsheets_id')
+    creds = get_decrypted_setting('gsheets_credentials')
+    
+    if not enabled or not sheet_id or not creds:
+        return 0, ["Google Sheets sync is not configured. Enable it and save credentials first."]
+    
+    errors = []
+    count = 0
+    
+    try:
+        conn = get_db_connection()
+        rows = conn.execute("SELECT * FROM routing_records").fetchall()
+        conn.close()
+        
+        for row in rows:
+            try:
+                row_dict = dict(row)
+                push_row_to_gsheets(sheet_id, creds, row_dict)
+                count += 1
+            except Exception as e:
+                emp = row['employee'] if row['employee'] else '?'
+                code = row['code'] if row['code'] else '?'
+                errors.append(f"Row {emp}/{code}: {str(e)[:100]}")
+        
+        return count, errors
+    except Exception as e:
+        return 0, [str(e)]
 
 def force_import_from_excel():
     """Force reload data from Excel without exporting back - preserves manual Excel edits."""
