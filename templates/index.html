@@ -87,6 +87,7 @@
             font-size: 3rem;
             font-weight: 800;
             background: linear-gradient(to right, #ffffff, #c084fc, #818cf8);
+            background-clip: text;
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             margin-bottom: 10px;
@@ -165,12 +166,15 @@
             background: var(--glass-bg);
             border: 1px solid var(--glass-border);
             border-radius: var(--radius-lg);
-            padding: 35px;
+            padding: 20px;
             box-shadow: var(--shadow);
             backdrop-filter: blur(20px);
             margin-bottom: 30px;
             position: relative;
             overflow: hidden;
+            max-width: 95%;
+            margin-left: auto;
+            margin-right: auto;
         }
 
         .glass-card::before {
@@ -214,7 +218,7 @@
         .grid-2 {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            gap: 30px;
+            gap: 15px;
         }
 
         /* FORMS */
@@ -564,9 +568,12 @@
             opacity: 0.6;
         }
 
-        .table-container {
+        #recordsTableContainer {
             width: 100%;
+            max-width: 100%;
             overflow-x: auto;
+            overflow-y: auto;
+            max-height: 70vh;
             border-radius: var(--radius-md);
             border: 1px solid var(--glass-border);
             background: rgba(15, 23, 42, 0.4);
@@ -576,25 +583,28 @@
             width: 100%;
             border-collapse: collapse;
             text-align: left;
-            font-size: 0.95rem;
+            font-size: 0.75rem;
         }
 
         th {
             background: rgba(99, 102, 241, 0.1);
             color: #a5b4fc;
-            padding: 15px 20px;
+            padding: 8px 10px;
             font-weight: 600;
             border-bottom: 1.5px solid var(--glass-border);
             text-transform: uppercase;
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             letter-spacing: 0.05em;
             white-space: nowrap;
+            text-align: center;
         }
 
         td {
-            padding: 14px 20px;
+            padding: 8px 10px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.05);
             white-space: nowrap;
+            font-size: 0.75rem;
+            text-align: center;
         }
 
         tr:hover td {
@@ -730,6 +740,42 @@
             color: #818cf8;
         }
 
+        .btn-add-all {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: var(--success);
+            margin-bottom: 5px;
+        }
+
+        .btn-add-all:hover {
+            background: var(--success);
+            color: #0f172a;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.2);
+        }
+
+        .btn-add-all:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        .school-status {
+            font-size: 0.85rem;
+            margin-top: 4px;
+            margin-bottom: 8px;
+            min-height: 1.2em;
+        }
+
+        .school-status.valid {
+            color: var(--success);
+        }
+
+        .school-status.invalid {
+            color: var(--text-muted);
+        }
+
         /* PRINT MEDIA STYLING */
         @media print {
             body * {
@@ -785,6 +831,19 @@
 
         <div id="alert-container" class="no-print"></div>
 
+        <!-- ADMIN PIN GATE -->
+        <div id="adminPinGate" style="display:none; position:fixed; inset:0; background:rgba(9,11,26,0.97); z-index:9999; padding:50px; text-align:center;">
+            <div style="background:rgba(30,41,59,0.9); border:1px solid #6366f1; border-radius:24px; padding:40px; max-width:400px; margin:0 auto;">
+                <div style="font-size:3rem; margin-bottom:16px;">🔐</div>
+                <h2 style="margin-bottom:10px;">Admin Access</h2>
+                <p style="color:#94a3b8; margin-bottom:25px;">Enter admin PIN to access settings</p>
+                <input type="password" id="adminPinInput" placeholder="Enter PIN..." 
+                       style="width:100%; padding:14px; font-size:1.2rem; text-align:center; background:#0f172a; border:2px solid #6366f1; border-radius:12px; color:white; margin-bottom:15px;">
+                <button onclick="verifyAdminPin()" style="width:100%; padding:14px; background:linear-gradient(135deg,#6366f1,#a855f7); border:none; border-radius:12px; color:white; font-size:1rem; font-weight:bold; cursor:pointer;">Unlock</button>
+                <p id="adminPinError" style="color:#ef4444; margin-top:10px; font-size:0.9rem;"></p>
+            </div>
+        </div>
+
         <!-- TAB 1: OVERVIEW -->
         <div id="tab-dashboard" class="tab-panel active">
             <div class="glass-card">
@@ -839,6 +898,8 @@
                         <label>Select School / Office</label>
                         <input type="text" id="schoolInput" list="schoolsListGenerator" oninput="onSchoolInput()" placeholder="Type or select school/office...">
                         <datalist id="schoolsListGenerator"></datalist>
+                        <div id="schoolStatus" class="school-status invalid">Type and select a valid school</div>
+                        <button id="addAllBtn" class="btn btn-add-all" onclick="addAllEmployees()" disabled>📋 Add All Employees from this School</button>
                     </div>
 
                     <div class="form-group">
@@ -894,7 +955,25 @@
                         <div class="qr-success">🎉 Code Created Successfully!</div>
                         <img id="codeImage" src="" alt="Code Result">
                         <p style="font-family:'JetBrains Mono', monospace; font-size:1.2rem; font-weight:700; margin-bottom:20px;" id="codeText"></p>
-                        <button class="btn btn-add-sheet" onclick="addToPrintSheet()">➕ Add to Sheet Layout</button>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                            <button class="btn btn-add-sheet" onclick="addToPrintSheet()" style="flex:1;">➕ Add to Print Sheet</button>
+                            <button class="btn btn-primary" onclick="downloadBarcodeOverlay()" style="flex:1;">🖨️ Print Barcode Overlay</button>
+                        </div>
+                        <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
+                            <select id="overlayPosition" style="flex:1; padding:10px; background:rgba(15,23,42,0.6); border:1px solid var(--glass-border); border-radius:var(--radius-md); color:var(--text-main);">
+                                <option value="top-right">Top-Right Corner</option>
+                                <option value="top-left">Top-Left Corner</option>
+                                <option value="bottom-right">Bottom-Right Corner</option>
+                                <option value="bottom-left">Bottom-Left Corner</option>
+                            </select>
+                            <select id="overlayPageSize" style="flex:1; padding:10px; background:rgba(15,23,42,0.6); border:1px solid var(--glass-border); border-radius:var(--radius-md); color:var(--text-main);">
+                                <option value="legal">Legal (8.5 x 13)</option>
+                                <option value="letter">Letter (8.5 x 11)</option>
+                            </select>
+                        </div>
+                        <p style="font-size:0.85rem; color:var(--text-muted); margin-top:12px;">
+                            Opens the print dialog with a blank page (Legal size by default) and ONLY the barcode at your chosen corner position. Print this onto your already-printed document.
+                        </p>
                     </div>
                 </div>
             </div>
@@ -907,6 +986,7 @@
                 </div>
                 <div class="table-actions no-print">
                     <button class="btn btn-primary" onclick="printSheet()" style="width:auto;">🖨️ Print Layout Sheet</button>
+                    <button class="btn btn-add-sheet" onclick="batchPrintPDF()" style="width:auto;">📥 Batch Export as PDF (1.5" Labels)</button>
                     <button class="btn btn-secondary" onclick="clearSheet()" style="width:auto;">🗑️ Clear All Barcodes</button>
                 </div>
                 <div class="sheet-grid" id="sheetGrid">
@@ -920,49 +1000,32 @@
             <div class="glass-card">
                 <div class="card-title-row">
                     <div class="card-icon">📋</div>
-                    <h2>Complete Document Routing Log</h2>
+                    <h2>Document Routing Log</h2>
                 </div>
 
-                <div class="table-actions">
-                    <div class="search-wrapper">
-                        <input type="text" id="tableSearch" onkeyup="filterTable()" placeholder="Search employee, department, code, or receiving office...">
-                    </div>
-                    <button class="btn btn-secondary" onclick="loadRoutingRecords()" style="width:auto; height: 50px;">🔄 Refresh Table</button>
-                </div>
+        <div class="table-actions">
+    <div class="search-wrapper">
+        <input type="text" id="tableSearch" onkeyup="filterTable()" placeholder="Search employee, department, code, or receiving office...">
+    </div>
+    <button class="btn btn-secondary" onclick="changePage(-1)" style="width:auto; height: 50px;">◀ Previous</button>
+    <span id="pageIndicator" style="display:flex; align-items:center; padding:0 15px; font-weight:bold;">Page 1</span>
+    <button class="btn btn-secondary" onclick="changePage(1)" style="width:auto; height: 50px;">Next ▶</button>
+    <button class="btn btn-secondary" onclick="loadRoutingRecords()" style="width:auto; height: 50px;">🔄 Refresh</button>
+</div>
 
-                <div class="table-container">
+                <div id="recordsTableContainer" class="table-container">
                     <table id="recordsTable">
                         <thead>
                             <tr id="recordsTableHeaders">
                                 <th>Department</th>
-                                <th>School/Office (Origin)</th>
+                                <th>School/Office</th>
                                 <th>Employee</th>
                                 <th>Barcode Code</th>
-                                <th>Receiving Office 1</th>
-                                <th>Timestamp 1</th>
-                                <th>Receiving Office 2</th>
-                                <th>Timestamp 2</th>
-                                <th>Receiving Office 3</th>
-                                <th>Timestamp 3</th>
-                                <th>Receiving Office 4</th>
-                                <th>Timestamp 4</th>
-                                <th>Receiving Office 5</th>
-                                <th>Timestamp 5</th>
-                                <th>Receiving Office 6</th>
-                                <th>Timestamp 6</th>
-                                <th>Receiving Office 7</th>
-                                <th>Timestamp 7</th>
-                                <th>Receiving Office 8</th>
-                                <th>Timestamp 8</th>
-                                <th>Receiving Office 9</th>
-                                <th>Timestamp 9</th>
-                                <th>Receiving Office 10</th>
-                                <th>Timestamp 10</th>
                             </tr>
                         </thead>
                         <tbody id="recordsTableBody">
                             <tr>
-                                <td colspan="24" class="empty-list" style="text-align:center;">Loading routing data...</td>
+                                <td colspan="4" class="empty-list" style="text-align:center;">Loading routing data...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -986,21 +1049,28 @@
                     </label>
                 </div>
 
-                <div class="form-group">
-                    <label>Google Sheet ID</label>
-                    <input type="text" id="gsheets_id" placeholder="e.g. 1a2b3c4d5e6f7g8h9i...">
-                    <small style="color:var(--text-muted); display:block; margin-top:5px;">This is the unique ID found in your Google Sheet's URL between '/d/' and '/edit'</small>
+                <div id="configStatus" style="padding:20px; background:rgba(255,255,255,0.02); border:1px solid var(--glass-border); border-radius:var(--radius-md); margin-bottom:20px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                        <div>
+                            <span id="credStatus" style="color:var(--success); font-weight:600;">✅ Credentials configured</span>
+                            <span id="credMissing" style="color:var(--warning); font-weight:600;">⚠️ No credentials</span>
+                            <span style="color:var(--text-muted); margin-left:10px;">| Sheet ID:</span>
+                            <code id="sheetIdDisplay" style="color:var(--secondary); font-family:'JetBrains Mono', monospace; margin-left:5px;"></code>
+                        </div>
+                        <div style="display:flex; gap:10px;">
+                            <button class="btn btn-secondary" onclick="testSheetConnection()" style="width:auto; padding:10px 20px;">🔌 Test</button>
+                            <button class="btn btn-add-sheet" onclick="bulkSyncSheets()" id="bulkSyncBtn" style="width:auto; padding:10px 20px; margin-bottom:0;">📤 Bulk Sync</button>
+                        </div>
+                    </div>
+                    <div style="margin-top:10px;">
+                        <span id="bulkSyncStatus" style="font-size:0.85rem; color:var(--text-muted);"></span>
+                    </div>
                 </div>
-
-                <div class="form-group">
-                    <label>Google Service Account Credentials JSON</label>
-                    <textarea id="gsheets_credentials" rows="8" style="font-family:'JetBrains Mono', monospace; font-size:0.85rem;" placeholder='{ "type": "service_account", "project_id": ... }'></textarea>
-                    <small style="color:var(--text-muted); display:block; margin-top:5px;">Paste the entire contents of your Google Service Account credential JSON file here.</small>
-                </div>
-
-                <div style="display:flex; gap:15px; margin-top:20px;">
-                    <button class="btn btn-secondary" onclick="testSheetConnection()" style="flex:1;">🔌 Test Sheet Connection & Format Headers</button>
-                    <button class="btn btn-primary" onclick="saveSettings()" style="flex:1;">💾 Save Configuration</button>
+                <div style="padding:10px 0;">
+                    <p style="color:var(--text-muted); font-size:0.85rem;">
+                        <strong>🔒 Security Note:</strong> Your service account credentials are encrypted in the database. 
+                        The credentials file has been moved out of the project root to <code>../google_credentials/</code>.
+                    </p>
                 </div>
             </div>
         </div>
@@ -1020,12 +1090,28 @@
         };
 
         function switchTab(tabId) {
+            // If going to settings, check PIN first
+            if (tabId === 'tab-settings') {
+                fetch('/api/check_auth')
+                .then(res => res.json())
+                .then(data => {
+                    if (!data.admin_verified) {
+                        document.getElementById('adminPinGate').style.display = 'block';
+                        return;
+                    }
+                    showTabContent(tabId);
+                });
+            } else {
+                showTabContent(tabId);
+            }
+        }
+
+        function showTabContent(tabId) {
             document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
             document.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
             
             document.getElementById(tabId).classList.add('active');
             
-            // Find link matching onlick
             document.querySelectorAll('.tab-link').forEach(l => {
                 if (l.getAttribute('onclick').includes(tabId)) {
                     l.classList.add('active');
@@ -1036,6 +1122,32 @@
                 loadRoutingRecords();
             }
         }
+
+        function verifyAdminPin() {
+            const pin = document.getElementById('adminPinInput').value.trim();
+            if (!pin) return;
+            
+            fetch('/api/verify_pin', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({pin_type: 'admin', pin: pin})
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    document.getElementById('adminPinGate').style.display = 'none';
+                    loadSettings();
+                    showTabContent('tab-settings');
+                } else {
+                    document.getElementById('adminPinError').innerText = data.message || 'Invalid PIN';
+                }
+            });
+        }
+
+        // Enter key to submit
+        document.getElementById('adminPinInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') verifyAdminPin();
+        });
 
         function setCodeType(type) {
             codeType = type;
@@ -1110,12 +1222,27 @@
         function onSchoolInput() {
             var dept = document.getElementById('deptSelect').value;
             var school = document.getElementById('schoolInput').value.trim();
-            if (!dept || !school) return;
+            var statusEl = document.getElementById('schoolStatus');
+            var btn = document.getElementById('addAllBtn');
+            
+            if (!dept || !school) {
+                statusEl.className = 'school-status invalid';
+                statusEl.innerText = 'Type and select a valid school';
+                btn.disabled = true;
+                return;
+            }
             
             // Check if selected/typed school is in the datalist options to load employees
             var options = Array.from(document.getElementById('schoolsListGenerator').options).map(o => o.value);
             if (options.includes(school)) {
                 loadEmployees();
+                statusEl.className = 'school-status valid';
+                statusEl.innerText = '✅ School "' + school + '" selected';
+                btn.disabled = false;
+            } else {
+                statusEl.className = 'school-status invalid';
+                statusEl.innerText = 'Type and select a valid school from the dropdown';
+                btn.disabled = true;
             }
         }
 
@@ -1158,6 +1285,69 @@
         }
     });
 }
+
+        // --- ADD ALL EMPLOYEES FROM SCHOOL ---
+        function addAllEmployees() {
+            var dept = document.getElementById('deptSelect').value;
+            var school = document.getElementById('schoolInput').value.trim();
+            
+            if (!dept || !school) {
+                showAlert('error', 'Please select a department and school first.');
+                return;
+            }
+
+            var btn = document.getElementById('addAllBtn');
+            btn.disabled = true;
+            btn.innerText = '⏳ Loading employees...';
+            
+            fetch('/api/get_all_school_employees', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({department: dept, school: school})
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.innerText = '📋 Add All Employees from this School';
+                
+                if (data.status !== 'success') {
+                    showAlert('error', data.message || 'Failed to fetch employees.');
+                    return;
+                }
+                
+                var employees = data.employees || [];
+                if (employees.length === 0) {
+                    showAlert('info', 'No employees found for this school.');
+                    return;
+                }
+                
+                var added = 0;
+                var skipped = 0;
+                
+                employees.forEach(function(empName) {
+                    if (addedEmployees.some(function(e) { return e.name === empName; })) {
+                        skipped++;
+                    } else {
+                        addedEmployees.push({department: dept, school: school, name: empName});
+                        added++;
+                    }
+                });
+                
+                updateListDisplay();
+                
+                var msg = 'Added ' + added + ' employee' + (added !== 1 ? 's' : '') + ' from "' + school + '"';
+                if (skipped > 0) {
+                    msg += ' (' + skipped + ' already in batch)';
+                }
+                showAlert('success', msg);
+            })
+            .catch(function(err) {
+                btn.disabled = false;
+                btn.innerText = '📋 Add All Employees from this School';
+                showAlert('error', 'Network error: ' + err.message);
+            });
+        }
+
         // --- BATCH BINDING LIST ---
         function addToList() {
             var dept = document.getElementById('deptSelect').value;
@@ -1258,6 +1448,123 @@
             });
         }
 
+        // --- DOWNLOAD DOCUMENT PAGE (PDF with barcode at TOP RIGHT) ---
+        function downloadDocumentPage() {
+            if (!currentCode) {
+                showAlert('error', 'Generate a barcode first!');
+                return;
+            }
+
+            var type = codeType;
+            fetch('/api/document_page', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    code: currentCode,
+                    type: type
+                })
+            })
+            .then(function(resp) {
+                if (!resp.ok) throw new Error('PDF generation failed');
+                return resp.blob();
+            })
+            .then(function(blob) {
+                var url = window.URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = 'barcode_' + currentCode + '.pdf';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                showAlert('success', 'PDF downloaded! Barcode placed at TOP RIGHT corner.');
+            })
+            .catch(function(err) {
+                showAlert('error', 'Download failed: ' + err.message);
+            });
+        }
+
+        // --- BARCODE OVERLAY PRINT (blank page with barcode at chosen corner) ---
+        function downloadBarcodeOverlay() {
+            if (!currentCode) {
+                showAlert('error', 'Generate a barcode first!');
+                return;
+            }
+
+            var type = codeType;
+            var position = document.getElementById('overlayPosition').value;
+            var pageSize = document.getElementById('overlayPageSize').value;
+
+            // Build absolute URL for the barcode image
+            var imgSrc = window.location.origin + '/api/label_image/' + currentCode + '?type=' + type;
+
+            var pageWidth = pageSize === 'legal' ? '8.5in' : '8.5in';
+            var pageHeight = pageSize === 'legal' ? '13in' : '11in';
+
+            var printContent = '<!DOCTYPE html><html><head><meta charset="UTF-8">';
+            printContent += '<title>Barcode Overlay - ' + currentCode + '</title>';
+            printContent += '<style>';
+            printContent += '* { margin: 0; padding: 0; box-sizing: border-box; }';
+            printContent += 'body { width: ' + pageWidth + '; height: ' + pageHeight + '; background: white; position: relative; }';
+            printContent += '.barcode-container { position: absolute; text-align: center; }';
+            printContent += '.barcode-container img { max-width: 1.5in; height: auto; display: block; }';
+            printContent += '.code-label { font-family: monospace; font-size: 8pt; margin-top: 2px; }';
+            printContent += '.top-right { top: 0.5in; right: 0.5in; }';
+            printContent += '.top-left { top: 0.5in; left: 0.5in; }';
+            printContent += '.bottom-right { bottom: 0.5in; right: 0.5in; }';
+            printContent += '.bottom-left { bottom: 0.5in; left: 0.5in; }';
+            printContent += '@media print { @page { size: ' + pageSize + '; margin: 0; } body { margin: 0; } }';
+            printContent += '</style></head><body>';
+
+            printContent += '<div class="barcode-container ' + position + '">';
+            printContent += '<img src="' + imgSrc + '" alt="' + currentCode + '" onload="window.print(); setTimeout(function(){window.close()}, 500);">';
+            printContent += '<div class="code-label">CODE: ' + currentCode + '</div>';
+            printContent += '</div>';
+
+            printContent += '</body></html>';
+
+            var printWindow = window.open('', '_blank', 'width=800,height=600');
+            printWindow.document.write(printContent);
+            printWindow.document.close();
+            printWindow.focus();
+        }
+
+        // --- BATCH PRINT PDF ---
+        function batchPrintPDF() {
+            if (printSheetData.length === 0) {
+                showAlert('error', 'Add barcodes to the print sheet first!');
+                return;
+            }
+
+            var codes = printSheetData.map(function(item) {
+                return { code: item.code, type: 'barcode' };
+            });
+
+            fetch('/api/batch_labels', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ codes: codes })
+            })
+            .then(function(resp) {
+                if (!resp.ok) throw new Error('Batch PDF generation failed');
+                return resp.blob();
+            })
+            .then(function(blob) {
+                var url = window.URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = 'barcode_labels.pdf';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                showAlert('success', 'Batch PDF downloaded with ' + codes.length + ' label(s)!');
+            })
+            .catch(function(err) {
+                showAlert('error', 'Batch download failed: ' + err.message);
+            });
+        }
+
         // --- PRINTING SHEET UTILITIES ---
         function addToPrintSheet() {
             if (!currentCode) return;
@@ -1322,21 +1629,60 @@
                 showAlert('error', 'Add barcodes to print sheet layout first!');
                 return;
             }
-            window.print();
+
+            // Build a clean print window with only the barcodes
+            var printContent = '<!DOCTYPE html><html><head><meta charset="UTF-8">';
+            printContent += '<title>Print Barcodes</title>';
+            printContent += '<style>';
+            printContent += 'body { margin: 0.5in; font-family: Arial, sans-serif; }';
+            printContent += '.barcode-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }';
+            printContent += '.barcode-item { border: 2px solid black; border-radius: 8px; padding: 15px; text-align: center; page-break-inside: avoid; background: white; }';
+            printContent += '.barcode-item img { max-width: 100%; height: auto; }';
+            printContent += '.barcode-code { font-family: monospace; font-weight: bold; font-size: 14px; margin-top: 8px; letter-spacing: 0.05em; }';
+            printContent += '@media print { @page { margin: 0.3in; } }';
+            printContent += '</style></head><body>';
+            printContent += '<div class="barcode-grid">';
+
+            printSheetData.forEach(function(item) {
+                var imgSrc = item.image;
+                if (!imgSrc.startsWith('http')) {
+                    imgSrc = window.location.origin + imgSrc;
+                }
+                printContent += '<div class="barcode-item">';
+                printContent += '<img src="' + imgSrc + '" alt="' + item.code + '">';
+                printContent += '<div class="barcode-code">CODE: ' + item.code + '</div>';
+                printContent += '</div>';
+            });
+
+            printContent += '</div></body></html>';
+
+            var printWindow = window.open('', '_blank', 'width=800,height=600');
+            printWindow.document.write(printContent);
+            printWindow.document.close();
+            printWindow.focus();
+            printWindow.print();
+            // Close the window after printing (some browsers may block this)
+            setTimeout(function() { printWindow.close(); }, 1000);
         }
 
         // --- ROUTING DATATABLE FUNCTIONS ---
-        function loadRoutingRecords() {
-            fetch('/api/get_routing_records')
+        var currentPage = 1;
+
+        function loadRoutingRecords(page = 1) {
+            currentPage = page;
+            fetch('/api/get_routing_records?page=' + page + '&per_page=100')
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'success') {
                     // Update stats
                     const totalBarcodes = new Set(data.records.map(r => r.code)).size;
                     document.getElementById('stat-total-barcodes').innerText = totalBarcodes;
-                    document.getElementById('stat-total-employees').innerText = data.records.length;
+                    document.getElementById('stat-total-employees').innerText = data.pagination.total;
                     
-                    // Render Table rows
+                    // Update page indicator
+                    document.getElementById('pageIndicator').innerText = 'Page ' + currentPage + ' of ' + data.pagination.total_pages;
+                    
+                    // Render Table rows (compact: only 4 core columns)
                     renderRoutingTable(data.records);
                 } else {
                     showAlert('error', 'Failed to retrieve records: ' + data.message);
@@ -1344,68 +1690,33 @@
             });
         }
 
+        function changePage(delta) {
+            if (delta === 1) {
+                currentPage++;
+            } else {
+                currentPage--;
+                if (currentPage < 1) currentPage = 1;
+            }
+            loadRoutingRecords(currentPage);
+        }
+
         function renderRoutingTable(records) {
             const tbody = document.getElementById('recordsTableBody');
             if (records.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="24" class="empty-list" style="text-align:center;">No tracking data logged yet. Open the scanning screen and record some routing stamps!</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="4" class="empty-list" style="text-align:center;">No tracking data logged yet.</td></tr>';
                 return;
             }
             
-            // Dynamically determine maximum receiving office stage in returned records
-            let maxStage = 10;
-            records.forEach(r => {
-                Object.keys(r).forEach(k => {
-                    if (k.startsWith('receiving_office_')) {
-                        try {
-                            const num = parseInt(k.split('_').slice(-1)[0]);
-                            if (!isNaN(num) && num > maxStage) {
-                                maxStage = num;
-                            }
-                        } catch (err) {}
-                    }
-                });
-            });
-
-            // Dynamically update the table headers
-            const headersRow = document.getElementById('recordsTableHeaders');
-            let headerHtml = `
-                <th>Department</th>
-                <th>School/Office (Origin)</th>
-                <th>Employee</th>
-                <th>Barcode Code</th>
-            `;
-            for (let i = 1; i <= maxStage; i++) {
-                headerHtml += `
-                    <th>Receiving Office ${i}</th>
-                    <th>Timestamp ${i}</th>
-                `;
-            }
-            headersRow.innerHTML = headerHtml;
-            
+            // Only show 4 core columns: Department, School/Office, Employee, Code
             tbody.innerHTML = '';
             records.forEach(r => {
                 const tr = document.createElement('tr');
-                
-                // Base metadata
-                let html = `
+                tr.innerHTML = `
                     <td>${r.department || ""}</td>
                     <td>${r.school_office || ""}</td>
                     <td style="font-weight:700;">${r.employee || ""}</td>
                     <td><span class="table-code">${r.code || ""}</span></td>
                 `;
-                
-                // Dynamic columns up to maxStage
-                for (let i = 1; i <= maxStage; i++) {
-                    const office = r[`receiving_office_${i}`] || "";
-                    const ts = r[`timestamp_${i}`] || "";
-                    
-                    html += `
-                        <td>${office ? `<span class="table-office-badge">${office}</span>` : ""}</td>
-                        <td class="table-time">${ts}</td>
-                    `;
-                }
-                
-                tr.innerHTML = html;
                 tbody.appendChild(tr);
             });
         }
@@ -1430,68 +1741,109 @@
         }
 
         // --- CONFIGURATION SETTINGS ---
+        function updateCredStatus(configured, sheetId) {
+            const credStatus = document.getElementById('credStatus');
+            const credMissing = document.getElementById('credMissing');
+            const sheetIdDisplay = document.getElementById('sheetIdDisplay');
+            
+            if (configured) {
+                credStatus.style.display = 'inline';
+                credMissing.style.display = 'none';
+                sheetIdDisplay.innerText = sheetId || '(not set)';
+            } else {
+                credStatus.style.display = 'none';
+                credMissing.style.display = 'inline';
+                sheetIdDisplay.innerText = '';
+            }
+        }
+
         function loadSettings() {
             fetch('/api/get_settings')
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'success') {
                     document.getElementById('gsheets_enabled').checked = data.gsheets_enabled;
-                    document.getElementById('gsheets_id').value = data.gsheets_id || "";
-                    document.getElementById('gsheets_credentials').value = data.gsheets_credentials || "";
+                    updateCredStatus(data.gsheets_configured, data.gsheets_id);
                 }
             });
         }
 
         function saveSettings() {
+            // Settings are pre-configured. Toggle is handled.
+            // No user-editable fields remain.
             const enabled = document.getElementById('gsheets_enabled').checked;
-            const sheetId = document.getElementById('gsheets_id').value.trim();
-            const creds = document.getElementById('gsheets_credentials').value.trim();
 
             fetch('/api/save_settings', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
-                    gsheets_enabled: enabled,
-                    gsheets_id: sheetId,
-                    gsheets_credentials: creds
+                    gsheets_enabled: enabled
                 })
             })
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'success') {
-                    showAlert('success', 'Google Sheet synchronization settings updated!');
+                    showAlert('success', 'Sync setting updated!');
                 } else {
-                    showAlert('error', 'Saving settings failed: ' + data.message);
+                    showAlert('error', 'Saving failed: ' + data.message);
                 }
             });
         }
 
         function testSheetConnection() {
-            const sheetId = document.getElementById('gsheets_id').value.trim();
-            const creds = document.getElementById('gsheets_credentials').value.trim();
+            // Use stored credentials from the database via gsheet_status endpoint
+            showAlert('info', 'Connecting to Google Sheets using stored credentials...');
 
-            if (!sheetId || !creds) {
-                showAlert('error', 'Google Sheet ID and Credentials JSON content are required to execute connectivity test!');
-                return;
-            }
-
-            showAlert('info', 'Connecting to Google Sheets and preparing worksheet structure...');
-
-            fetch('/api/test_sheets', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    gsheets_id: sheetId,
-                    gsheets_credentials: creds
-                })
-            })
+            fetch('/api/gsheet_status')
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'success') {
-                    showAlert('success', `Success! Connected to Spreadsheet: "${data.title}". Headers initialized.`);
+                    showAlert('success', `✅ Connected to Spreadsheet: "${data.title}". Headers ready!`);
+                } else if (data.status === 'disabled') {
+                    showAlert('error', '⚠️ Google Sheets is not configured. Save your Sheet ID and credentials first.');
                 } else {
                     showAlert('error', 'Connectivity test failed: ' + data.message);
                 }
+            })
+            .catch(function(err) {
+                showAlert('error', 'Network error: ' + err.message);
+            });
+        }
+
+        // --- BULK SYNC TO GOOGLE SHEETS ---
+        function bulkSyncSheets() {
+            const btn = document.getElementById('bulkSyncBtn');
+            const status = document.getElementById('bulkSyncStatus');
+            
+            btn.disabled = true;
+            btn.innerText = '⏳ Syncing records to Google Sheets...';
+            status.innerText = '';
+
+            fetch('/api/bulk_sync', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.innerText = '📤 Bulk Sync All Records to Sheet';
+                
+                if (data.status === 'success') {
+                    status.innerText = `✅ ${data.synced} records synced successfully!`;
+                    showAlert('success', data.message);
+                } else if (data.status === 'partial') {
+                    status.innerText = `⚠️ ${data.synced} synced, ${data.errors.length} errors`;
+                    showAlert('warning', data.message);
+                } else {
+                    status.innerText = '❌ Sync failed';
+                    showAlert('error', data.message);
+                }
+            })
+            .catch(function(err) {
+                btn.disabled = false;
+                btn.innerText = '📤 Bulk Sync All Records to Sheet';
+                status.innerText = '❌ Network error';
+                showAlert('error', 'Bulk sync failed: ' + err.message);
             });
         }
     </script>
