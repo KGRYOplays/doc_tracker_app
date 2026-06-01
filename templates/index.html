@@ -1150,11 +1150,12 @@
                                 <th>Receiver</th>
                                 <th>Timestamp</th>
                                 <th>Remarks</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody id="recordsTableBody">
                             <tr>
-                                <td colspan="8" class="empty-list" style="text-align:center;">Loading routing data...</td>
+                                <td colspan="9" class="empty-list" style="text-align:center;">Loading routing data...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1262,7 +1263,55 @@
                     </p>
                 </div>
             </div>
+        
+            <!-- ADMIN: Local-Cloud Sync -->
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">🔄</div>
+                    <h2>Local ↔ Cloud Database Sync</h2>
+                </div>
+                <p style="color:var(--text-muted); margin-bottom:20px; font-size:0.9rem;">
+                    Sync your local database (<code>127.0.0.1:5000</code>) to the Render cloud instance. 
+                    Use this when working offline and you want to push your data to the cloud.
+                </p>
+                
+                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px;">
+                    <button class="btn btn-primary" onclick="exportLocalDB()" id="btnExport" style="width:auto; padding:10px 20px;">
+                        📥 Export Local Database
+                    </button>
+                    <button class="btn btn-secondary" onclick="document.getElementById('importFileInput').click()" style="width:auto; padding:10px 20px;">
+                        📤 Import Database (from JSON)
+                    </button>
+                    <input type="file" id="importFileInput" accept=".json" style="display:none;" onchange="importLocalDB(this)">
+                    <button class="btn btn-generate" onclick="showCloudPushDialog()" id="btnPushCloud" style="width:auto; padding:10px 20px;">
+                        ☁️ Push to Cloud
+                    </button>
+                </div>
+                
+                <div id="syncStatus" style="padding:15px; background:rgba(255,255,255,0.02); border:1px solid var(--glass-border); border-radius:var(--radius-md); min-height:40px;">
+                    <span style="color:var(--text-muted); font-size:0.85rem;">Ready. Choose an action above.</span>
+                </div>
+            </div>
+
+    <!-- Cloud Push Dialog (hidden) -->
+    <div id="cloudPushDialog" class="hidden" style="position:fixed;inset:0;background:rgba(9,11,26,0.95);z-index:20000;display:flex;align-items:center;justify-content:center;">
+        <div style="background:rgba(30,41,59,0.95);border:1px solid #6366f1;border-radius:20px;padding:40px;max-width:480px;width:90%;text-align:center;">
+            <div style="font-size:2.5rem;margin-bottom:12px;">☁️</div>
+            <h2 style="margin-bottom:4px;">Push to Cloud</h2>
+            <p style="color:var(--text-muted);margin-bottom:20px;font-size:0.9rem;">Enter your Render cloud app URL</p>
+            <input type="text" id="cloudUrlInput" placeholder="https://doc-tracker-app.onrender.com" 
+                   style="width:100%;padding:14px;font-size:1rem;background:rgba(15,23,42,0.8);border:2px solid #6366f1;border-radius:12px;color:white;margin-bottom:16px;text-align:center;"
+                   value="https://doc-tracker-app.onrender.com">
+            <button onclick="executePushToCloud()" style="width:100%;padding:14px;background:linear-gradient(135deg,#6366f1,#a855f7);border:none;border-radius:12px;color:white;font-weight:700;cursor:pointer;margin-bottom:8px;">
+                🚀 Push Now
+            </button>
+            <button onclick="document.getElementById('cloudPushDialog').style.display='none'" style="background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:0.85rem;">
+                Cancel
+            </button>
         </div>
+    </div>
+
+</div>
     </div>
 
     <script>
@@ -2006,7 +2055,7 @@
         function renderRoutingTable(records) {
             const tbody = document.getElementById('recordsTableBody');
             if (records.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" class="empty-list" style="text-align:center;">No tracking data logged yet.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="9" class="empty-list" style="text-align:center;">No tracking data logged yet.</td></tr>';
                 return;
             }
             
@@ -2047,11 +2096,91 @@
                                placeholder="Add remark..." 
                                style="width: 150px; background: rgba(15, 23, 42, 0.4); border: 1px solid var(--glass-border); border-radius: 6px; padding: 4px 8px; color: var(--text-main); font-size: 0.8rem; text-align: center; transition: all 0.3s;"
                                onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 10px rgba(99, 102, 241, 0.2)';" 
-                               onblur="this.style.borderColor='var(--glass-border)'; this.style.boxShadow='none';">` : `${r.remarks || ''}`}
+                               onblur="this.style.borderColor='var(--glass-border)'; this.style.boxShadow='none';">` : `<span style="color:var(--text-muted); font-size:0.8rem;">${r.remarks || '-'}</span>`}
+                    </td>
+                    <td>
+                        <button onclick="reprintBarcode('${r.code}')" 
+                                title="Reprint barcode for ${r.code}"
+                                style="background: linear-gradient(135deg, var(--success), #059669); color: white; border: none; border-radius: 8px; padding: 6px 12px; font-size: 0.75rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25); transition: all 0.2s;"
+                                onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(16, 185, 129, 0.4)';"
+                                onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(16, 185, 129, 0.25)';">
+                            🖨️ Barcode
+                        </button>
                     </td>
                 `;
                 tbody.appendChild(tr);
             });
+        }
+
+        // ── REPRINT BARCODE (from records table) ─────────────────────
+        function reprintBarcode(code) {
+            if (!code) {
+                showAlert('error', 'No barcode code found for this record.');
+                return;
+            }
+            
+            // Set as current code and open the print overlay dialog
+            currentCode = code;
+            currentImage = window.location.origin + '/api/label_image/' + code + '?type=barcode';
+            
+            // Open a print dialog with the barcode image (similar to downloadBarcodeOverlay)
+            var position = 'top-right';
+            var pageSize = 'legal';
+            var pageWidth = '8.5in';
+            var pageHeight = pageSize === 'legal' ? '13in' : '11in';
+            var imgSrc = currentImage;
+
+            var printContent = '<!DOCTYPE html><html><head><meta charset="UTF-8">';
+            printContent += '<title>Reprint Barcode - ' + code + '</title>';
+            printContent += '<style>';
+            printContent += '* { margin: 0; padding: 0; box-sizing: border-box; }';
+            printContent += '@page { size: 8.5in 13in; margin: 0.25in; }';
+            printContent += 'body { width: 8.5in; min-height: 13in; background: white; position: relative; margin: 0; padding: 0; }';
+            printContent += '.barcode-container { position: absolute; text-align: center; padding: 10px; background: white; border: 2px dashed #6366f1; border-radius: 8px; }';
+            printContent += '.barcode-container img { width: 1.5in; height: 1.5in; max-width: none; max-height: none; display: block; }';
+            printContent += '.code-label { font-family: monospace; font-size: 11pt; margin-top: 4px; font-weight: bold; color: #0f172a; }';
+            printContent += '.info { font-family: sans-serif; font-size: 9pt; color: #64748b; margin-top: 2px; }';
+            printContent += '.top-right { top: 0.25in; right: 0.25in; }';
+            printContent += '.top-left { top: 0.25in; left: 0.25in; }';
+            printContent += '.bottom-right { bottom: 0.25in; right: 0.25in; }';
+            printContent += '.bottom-left { bottom: 0.25in; left: 0.25in; }';
+            printContent += '.center { top: 50%; left: 50%; transform: translate(-50%, -50%); }';
+            printContent += '@media screen { body { padding: 0.25in; } }';
+            printContent += '@media print { @page { size: 8.5in 13in; margin: 0.25in; } html, body { margin: 0; padding: 0; width: 8.5in; height: 13in; } .no-print { display: none !important; } }';
+            printContent += '</style></head><body>';
+
+            printContent += '<div class="no-print" style="position:fixed; top:10px; left:50%; transform:translateX(-50%); background:#1e293b; color:white; padding:10px 20px; border-radius:8px; font-family:sans-serif; z-index:9999; text-align:center;">';
+            printContent += '<strong>📋 REPRINT MODE</strong><br>Choose position and click Print:<br>';
+            printContent += '<button onclick="setPos(\'top-right\')" style="margin:2px; padding:4px 10px; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer;">Top-Right</button>';
+            printContent += '<button onclick="setPos(\'top-left\')" style="margin:2px; padding:4px 10px; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer;">Top-Left</button>';
+            printContent += '<button onclick="setPos(\'bottom-right\')" style="margin:2px; padding:4px 10px; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer;">Bottom-Right</button>';
+            printContent += '<button onclick="setPos(\'bottom-left\')" style="margin:2px; padding:4px 10px; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer;">Bottom-Left</button>';
+            printContent += '<button onclick="setPos(\'center\')" style="margin:2px; padding:4px 10px; background:#6366f1; color:white; border:none; border-radius:4px; cursor:pointer;">Center</button>';
+            printContent += '<button onclick="window.print()" style="margin:8px 2px 2px; padding:6px 16px; background:#3b82f6; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">🖨️ PRINT</button>';
+            printContent += '<button onclick="window.close()" style="margin:8px 2px 2px; padding:6px 16px; background:#ef4444; color:white; border:none; border-radius:4px; cursor:pointer;">✕ Close</button>';
+            printContent += '</div>';
+
+            printContent += '<div id="barcodeBox" class="barcode-container top-right">';
+            printContent += '<img src="' + imgSrc + '" alt="' + code + '">';
+            printContent += '<div class="code-label">CODE: ' + code + '</div>';
+            printContent += '<div class="info">📅 Reprinted: ' + new Date().toLocaleString() + '</div>';
+            printContent += '</div>';
+
+            printContent += '<script>';
+            printContent += 'function setPos(pos) {';
+            printContent += '  var box = document.getElementById("barcodeBox");';
+            printContent += '  box.className = "barcode-container " + pos;';
+            printContent += '}';
+            printContent += '</' + 'script>';
+
+            printContent += '</body></html>';
+
+            var printWindow = window.open('', '_blank', 'width=900,height=700');
+            printWindow.document.write(printContent);
+            printWindow.document.close();
+            printWindow.focus();
+            
+            showAlert('success', '🖨️ Reprint dialog opened for ' + code);
         }
 
         function saveRemarks(recordId, value) {
@@ -2324,6 +2453,101 @@
                 showAlert('error', 'Bulk sync failed: ' + err.message);
             });
         }
-    </script>
+    
+        // ── LOCAL-CLOUD SYNC ──────────────────────────────────────
+        function exportLocalDB() {
+            var btn = document.getElementById('btnExport');
+            btn.disabled = true;
+            btn.innerText = '⏳ Exporting...';
+            setSyncStatus('Exporting local database...', 'info');
+            fetch('/api/sync/export')
+            .then(function(resp) {
+                if (!resp.ok) throw new Error('Export failed: ' + resp.status);
+                return resp.blob();
+            })
+            .then(function(blob) {
+                var url = window.URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = 'db_backup_' + new Date().toISOString().slice(0,10) + '.json';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                btn.disabled = false;
+                btn.innerText = '📥 Export Local Database';
+                setSyncStatus('✅ Database exported! File downloaded.', 'success');
+            })
+            .catch(function(err) {
+                btn.disabled = false;
+                btn.innerText = '📥 Export Local Database';
+                setSyncStatus('❌ Export failed: ' + err.message, 'error');
+            });
+        }
+
+        function importLocalDB(input) {
+            var file = input.files[0];
+            if (!file) return;
+            setSyncStatus('⏳ Importing ' + file.name + '...', 'info');
+            var formData = new FormData();
+            formData.append('file', file);
+            fetch('/api/sync/import', { method: 'POST', body: formData })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.status === 'success') {
+                    setSyncStatus('✅ ' + data.message, 'success');
+                    loadRoutingRecords();
+                    loadDepartments();
+                } else {
+                    setSyncStatus('❌ Import failed: ' + data.message, 'error');
+                }
+                input.value = '';
+            })
+            .catch(function(err) {
+                setSyncStatus('❌ Import error: ' + err.message, 'error');
+                input.value = '';
+            });
+        }
+
+        function showCloudPushDialog() {
+            document.getElementById('cloudPushDialog').style.display = 'flex';
+        }
+
+        function executePushToCloud() {
+            var cloudUrl = document.getElementById('cloudUrlInput').value.trim();
+            if (!cloudUrl) { setSyncStatus('❌ Cloud URL required!', 'error'); return; }
+            document.getElementById('cloudPushDialog').style.display = 'none';
+            var btn = document.getElementById('btnPushCloud');
+            btn.disabled = true;
+            btn.innerText = '⏳ Pushing...';
+            setSyncStatus('⏳ Pushing to ' + cloudUrl + '...', 'info');
+            fetch('/api/sync/push_to_cloud', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ cloud_url: cloudUrl })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                btn.disabled = false;
+                btn.innerText = '☁️ Push to Cloud';
+                if (data.status === 'success') { setSyncStatus('✅ ' + data.message, 'success'); }
+                else { setSyncStatus('❌ ' + data.message, 'error'); }
+            })
+            .catch(function(err) {
+                btn.disabled = false;
+                btn.innerText = '☁️ Push to Cloud';
+                setSyncStatus('❌ Push failed: ' + err.message, 'error');
+            });
+        }
+
+        function setSyncStatus(msg, type) {
+            var el = document.getElementById('syncStatus');
+            if (!el) return;
+            var c = { success: '#34d399', error: '#f87171', info: '#818cf8' };
+            var ic = { success: '✅', error: '❌', info: 'ℹ️' };
+            el.innerHTML = '<span style="color:' + (c[type]||'#94a3b8') + '; font-size:0.9rem; font-weight:600;">' + (ic[type]||'') + ' ' + msg + '</span>';
+        }
+
+</script>
 </body>
 </html>
