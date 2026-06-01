@@ -597,16 +597,21 @@
 </head>
 <body>
 
-    <!-- ═══════════════ SCANNER PIN GATE ═══════════════ -->
+    <!-- ═══════════════ SCANNER LOGIN GATE ═══════════════ -->
     <div id="pinGateOverlay">
         <div class="pin-gate-box">
             <div class="pin-gate-icon">🔐</div>
             <h2>Scanner Access</h2>
-            <p>Enter your scanner PIN to continue</p>
-            <input type="password" id="pinInput" placeholder="····" maxlength="20"
-                   onkeypress="if(event.key==='Enter') submitPin()" autofocus>
+            <p style="color:var(--text-muted); margin-bottom:6px;">Login required — <strong style="color:#a5b4fc;">Admin</strong> or <strong style="color:#a5b4fc;">Supervisor</strong> only</p>
+            <input type="text" id="loginUsername" placeholder="Username" autocomplete="username"
+                   style="width:100%; padding:13px; font-size:1rem; text-align:center; background:rgba(15,23,42,0.8); border:2px solid rgba(99,102,241,0.3); border-radius:12px; color:white; font-family:inherit; margin-bottom:12px; transition:all 0.3s;"
+                   onkeypress="if(event.key==='Enter') document.getElementById('loginPassword').focus()">
+            <input type="password" id="loginPassword" placeholder="Passkey" autocomplete="current-password"
+                   style="width:100%; padding:13px; font-size:1rem; letter-spacing:0.2em; text-align:center; background:rgba(15,23,42,0.8); border:2px solid rgba(99,102,241,0.3); border-radius:12px; color:white; font-family:'JetBrains Mono',monospace; margin-bottom:16px; transition:all 0.3s;"
+                   onkeypress="if(event.key==='Enter') submitScannerLogin()">
             <div id="pinError"></div>
-            <button class="btn-pin-submit" onclick="submitPin()">Unlock Scanner</button>
+            <button class="btn-pin-submit" onclick="submitScannerLogin()">🔓 Unlock Scanner</button>
+            <p style="margin-top:18px; font-size:0.82rem; color:var(--text-muted);">Forgot passkey? Contact your <strong>Admin</strong> for a reset.</p>
         </div>
     </div>
 
@@ -619,6 +624,10 @@
         <header>
             <h1>📷 Barcode &amp; QR Routing Scanner</h1>
             <p class="subtitle">Assign receiving offices and route documents in real time</p>
+            <div id="scannerUserBadge" style="margin-top:10px; display:inline-flex; align-items:center; gap:10px; background:rgba(99,102,241,0.15); border:1px solid rgba(99,102,241,0.3); border-radius:30px; padding:6px 16px; font-size:0.9rem;">
+                <span>👤 <span id="scannerUsername"></span> &nbsp;·&nbsp; <span id="scannerRole" style="color:#a5b4fc; font-weight:700;"></span></span>
+                <button onclick="scannerLogout()" style="background:rgba(239,68,68,0.2); border:1px solid rgba(239,68,68,0.3); color:#f87171; border-radius:20px; padding:3px 12px; cursor:pointer; font-size:0.8rem; font-weight:600;">Logout</button>
+            </div>
         </header>
 
         <div class="nav-center">
@@ -630,7 +639,8 @@
             <label for="receivingOffice">📍 Current Receiving Office</label>
             <div class="picker-input-wrapper">
                 <input type="text" id="receivingOffice" list="schoolsList"
-                       placeholder="Type or select the receiving office...">
+                       placeholder="Type or select the receiving office..."
+                       onchange="loadReceiversForOffice()">
                 <datalist id="schoolsList"></datalist>
             </div>
             <div class="receiver-name-wrapper">
@@ -701,47 +711,73 @@
         let sessionLogs = [];
         let recentScans = {}; // 5-second frontend rapid-trigger protection
 
-        // ── PIN GATE ──────────────────────────────────────────────────────────
-        function submitPin() {
-            const pin = document.getElementById('pinInput').value.trim();
-            if (!pin) return;
-            fetch('/api/verify_pin', {
+        // ── LOGIN GATE ──────────────────────────────────────────────────────────
+        function submitScannerLogin() {
+            const username = document.getElementById('loginUsername').value.trim();
+            const password = document.getElementById('loginPassword').value.trim();
+            const errEl = document.getElementById('pinError');
+            if (!username || !password) { errEl.textContent = 'Please enter both username and passkey.'; return; }
+            errEl.textContent = '';
+
+            fetch('/api/login', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({pin_type: 'scanner', pin})
+                body: JSON.stringify({username, password})
             })
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'success') {
+                    const role = data.user.role;
+                    if (role !== 'Admin' && role !== 'Supervisor') {
+                        errEl.textContent = 'Access denied. Scanner requires Admin or Supervisor role.';
+                        const box = document.querySelector('.pin-gate-box');
+                        box.style.borderColor = 'var(--error)';
+                        setTimeout(() => { box.style.borderColor = 'rgba(99,102,241,0.3)'; }, 1500);
+                        return;
+                    }
+                    document.getElementById('scannerUsername').textContent = data.user.username;
+                    document.getElementById('scannerRole').textContent = role;
                     document.getElementById('pinGateOverlay').style.display = 'none';
                     document.getElementById('scannerContent').style.display = 'block';
                     initScanner();
                 } else {
-                    const errEl = document.getElementById('pinError');
-                    errEl.textContent = data.message;
+                    errEl.textContent = data.message || 'Login failed.';
                     const box = document.querySelector('.pin-gate-box');
-                    box.style.animation = 'none';
                     box.style.borderColor = 'var(--error)';
-                    setTimeout(() => { box.style.borderColor = 'rgba(99,102,241,0.3)'; }, 1200);
-                    document.getElementById('pinInput').value = '';
+                    setTimeout(() => { box.style.borderColor = 'rgba(99,102,241,0.3)'; }, 1500);
+                    document.getElementById('loginPassword').value = '';
                 }
             })
             .catch(() => {
-                document.getElementById('pinError').textContent = 'Network error. Is the server running?';
+                errEl.textContent = 'Network error. Is the server running?';
+            });
+        }
+
+        function scannerLogout() {
+            fetch('/api/logout', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})
+            .then(() => {
+                document.getElementById('scannerContent').style.display = 'none';
+                document.getElementById('pinGateOverlay').style.display = 'flex';
+                document.getElementById('loginUsername').value = '';
+                document.getElementById('loginPassword').value = '';
+                document.getElementById('pinError').textContent = '';
+                stopScanner();
             });
         }
 
         window.onload = function() {
-            // Check if already verified in this session
+            // Check if already logged in with valid role
             fetch('/api/check_auth')
             .then(r => r.json())
             .then(data => {
-                if (data.scanner_verified) {
+                if (data.logged_in && (data.role === 'Admin' || data.role === 'Supervisor')) {
+                    document.getElementById('scannerUsername').textContent = data.username;
+                    document.getElementById('scannerRole').textContent = data.role;
                     document.getElementById('pinGateOverlay').style.display = 'none';
                     document.getElementById('scannerContent').style.display = 'block';
                     initScanner();
                 }
-                // Otherwise PIN gate stays visible
+                // Otherwise login gate stays visible
             })
             .catch(() => {
                 // Server unreachable — keep gate
@@ -750,7 +786,6 @@
 
         function initScanner() {
             loadAllSchools();
-            loadAllReceivers();
             const barcodeInp = document.getElementById('barcodeInput');
             barcodeInp.addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') {
@@ -842,33 +877,27 @@
             });
         }
 
-        function loadAllReceivers() {
-            // Pre-populate receivers datalist from master DB (all employees across all schools)
-            // We reuse get_departments → get all schools → collect employees
-            // Simpler: just expose a flat list of all employees from master_db
-            fetch('/api/get_all_schools')
+        function loadReceiversForOffice() {
+            const school = document.getElementById('receivingOffice').value.trim();
+            const dl = document.getElementById('receiversList');
+            dl.innerHTML = '';
+            
+            if (!school) return;
+            
+            fetch('/api/get_all_school_employees', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({school: school})
+            })
             .then(r => r.json())
             .then(data => {
-                if (data.status !== 'success') return;
-                // Fetch employees for each school in parallel
-                const promises = data.schools.map(school =>
-                    fetch('/api/get_all_school_employees', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({school})
-                    }).then(r => r.json())
-                );
-                Promise.all(promises).then(results => {
-                    const allNames = new Set();
-                    results.forEach(r => { if (r.status === 'success') r.employees.forEach(e => allNames.add(e)); });
-                    const dl = document.getElementById('receiversList');
-                    dl.innerHTML = '';
-                    [...allNames].sort().forEach(name => {
+                if (data.status === 'success') {
+                    data.employees.forEach(name => {
                         const opt = document.createElement('option');
                         opt.value = name;
                         dl.appendChild(opt);
                     });
-                });
+                }
             });
         }
 

@@ -6,8 +6,9 @@ import random
 import string
 from datetime import datetime
 from functools import wraps
-from flask import Flask, render_template, request, jsonify, session, send_file
+from flask import Flask, render_template, request, jsonify, session, send_file, redirect, url_for
 from PIL import Image, ImageDraw, ImageFont
+import hashlib
 
 import db_manager
 
@@ -35,8 +36,26 @@ db_manager.init_db()
 def require_admin(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not session.get('admin_verified'):
-            return jsonify({'status': 'error', 'message': 'Admin PIN required.'}), 403
+        if session.get('user_role') != 'Admin':
+            return jsonify({'status': 'error', 'message': 'Admin privileges required.'}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+def require_role(*roles):
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if session.get('user_role') not in roles:
+                return jsonify({'status': 'error', 'message': f'Access restricted. Requires roles: {", ".join(roles)}'}), 403
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+def require_login(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('username'):
+            return jsonify({'status': 'error', 'message': 'Login required.'}), 401
         return f(*args, **kwargs)
     return decorated
 
@@ -73,14 +92,25 @@ def load_master_db():
 
 
 def save_code_lookup(code, department, school, employees, doc_type):
+    gen_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = db_manager.get_db_connection()
     conn.execute(
         "INSERT OR REPLACE INTO code_lookup (code, department, school_office, employees, doc_type, generated_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        (code, department, school, ','.join(employees), doc_type, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        (code, department, school, '|||'.join(employees), doc_type, gen_time)
     )
     conn.commit()
     conn.close()
+    
+    # Push to GSheets
+    enabled = db_manager.get_setting('gsheets_enabled') == 'True'
+    sheet_id = db_manager.get_setting('gsheets_id')
+    creds = db_manager.get_decrypted_setting('gsheets_credentials')
+    if enabled and sheet_id and creds:
+        import threading
+        code_dict = {'code': code, 'department': department, 'school_office': school, 'employees': '|||'.join(employees), 'doc_type': doc_type, 'generated_at': gen_time}
+        threading.Thread(target=db_manager.push_code_to_gsheets, args=(sheet_id, creds, code_dict), daemon=True).start()
+        
     db_manager.trigger_excel_export()
 
 
@@ -90,10 +120,19 @@ def get_code_lookup(code):
     conn.close()
     if not row:
         return None
+    
+    # Handle both old (comma) and new (|||) delimiters for backward compatibility
+    employees_str = row['employees']
+    if '|||' in employees_str:
+        employees_list = employees_str.split('|||')
+    else:
+        # Old format - split by comma (will be migrated)
+        employees_list = employees_str.split(',')
+    
     return {
         'department': row['department'],
         'school':     row['school_office'],
-        'employees':  row['employees'].split(','),
+        'employees':  employees_list,
         'doc_type':   row['doc_type']
     }
 
@@ -520,52 +559,317 @@ def scanner_page():
 # ─────────────────────────────────────────────
 #  AUTH ENDPOINTS
 # ─────────────────────────────────────────────
-@app.route('/api/verify_pin', methods=['POST'])
-def verify_pin():
+
+@app.route('/api/login', methods=['POST'])
+def login():
     try:
-        data      = request.json
-        pin_type  = data.get('pin_type')   # 'scanner' or 'admin'
-        pin       = data.get('pin', '').strip()
-
-        if pin_type == 'scanner':
-            stored = db_manager.get_setting('scanner_pin', 'scanner123')
-            if pin == stored:
-                session['scanner_verified'] = True
-                session.permanent = True
-                return jsonify({'status': 'success', 'message': 'Scanner access granted.'})
-            return jsonify({'status': 'error', 'message': 'Incorrect scanner PIN.'})
-
-        elif pin_type == 'admin':
-            stored = db_manager.get_setting('admin_pin', 'admin123')
-            if pin == stored:
-                session['admin_verified'] = True
-                session.permanent = True
-                return jsonify({'status': 'success', 'message': 'Admin access granted.'})
-            return jsonify({'status': 'error', 'message': 'Incorrect admin PIN.'})
-
-        return jsonify({'status': 'error', 'message': 'Invalid pin_type.'})
+        data = request.json
+        username = data.get('username', '').strip().lower()
+        password = data.get('password', '').strip()
+        
+        if not username or not password:
+            return jsonify({'status': 'error', 'message': 'Username and passkey are required.'}), 400
+            
+        conn = db_manager.get_db_connection()
+        user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        conn.close()
+        
+        if not user:
+            return jsonify({'status': 'error', 'message': 'Invalid username or passkey.'}), 401
+            
+        pw_hash = hashlib.sha256(password.encode()).hexdigest()
+        if user['password_hash'] != pw_hash:
+            return jsonify({'status': 'error', 'message': 'Invalid username or passkey.'}), 401
+            
+        if user['status'] != 'Approved':
+            return jsonify({'status': 'error', 'message': 'Your account is pending admin approval.'}), 403
+            
+        session['username'] = user['username']
+        session['user_role'] = user['role']
+        session['school_office'] = user['school_office'] or ''
+        session.permanent = True
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Logged in successfully as {user["role"]}!',
+            'user': {
+                'username': user['username'],
+                'role': user['role'],
+                'school_office': user['school_office'] or ''
+            }
+        })
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)})
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@app.route('/api/register', methods=['POST'])
+def register():
+    try:
+        data = request.json
+        username = data.get('username', '').strip().lower()
+        role_request = data.get('role', 'User').strip()
+        school_office = data.get('school_office', '').strip()
+        email = data.get('email', '').strip()
+        
+        # Validate username: no spaces allowed
+        if ' ' in username:
+            return jsonify({'status': 'error', 'message': 'Username must not contain spaces.'}), 400
+            
+        if not username:
+            return jsonify({'status': 'error', 'message': 'Username is required.'}), 400
+        
+        if not school_office:
+            return jsonify({'status': 'error', 'message': 'School/Office is required.'}), 400
+            
+        # Validate email domain
+        if not email.endswith('@deped.gov.ph'):
+            return jsonify({'status': 'error', 'message': 'Only @deped.gov.ph email addresses are allowed.'}), 400
+            
+        if role_request not in ['User', 'Supervisor', 'Admin']:
+            role_request = 'User'
+            
+        conn = db_manager.get_db_connection()
+        existing = conn.execute("SELECT username FROM users WHERE username = ?", (username,)).fetchone()
+        
+        if existing:
+            conn.close()
+            return jsonify({'status': 'error', 'message': 'Username already exists.'}), 400
+        
+        # Default password is the username itself, and force change on first login
+        password = username  # default passkey = username
+        pw_hash = hashlib.sha256(password.encode()).hexdigest()
+        conn.execute("INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change) VALUES (?, ?, ?, 'Pending', ?, ?, 1)",
+                     (username, pw_hash, role_request, school_office, email))
+        conn.commit()
+        conn.close()
+        
+        # Sync users to sheets if enabled
+        enabled = db_manager.get_setting('gsheets_enabled') == 'True'
+        sheet_id = db_manager.get_setting('gsheets_id')
+        creds = db_manager.get_decrypted_setting('gsheets_credentials')
+        if enabled and sheet_id and creds:
+            user_dict = {'username': username, 'password_hash': pw_hash, 'role': role_request, 'status': 'Pending', 'school_office': school_office, 'email': email}
+            import threading
+            threading.Thread(target=db_manager.push_user_to_gsheets, args=(sheet_id, creds, user_dict), daemon=True).start()
+            
+        return jsonify({'status': 'success', 'message': 'Registration request submitted! Please wait for Admin approval.'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# ── Guest login (no credentials needed, read-only records view) ──
+@app.route('/api/guest_login', methods=['POST'])
+def guest_login():
+    try:
+        session['username'] = 'guest'
+        session['user_role'] = 'Guest'
+        session['school_office'] = ''
+        session.permanent = True
+        return jsonify({
+            'status': 'success',
+            'message': 'Logged in as Guest!',
+            'user': {
+                'username': 'guest',
+                'role': 'Guest',
+                'school_office': ''
+            }
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/check_auth', methods=['GET'])
 def check_auth():
     return jsonify({
-        'scanner_verified': bool(session.get('scanner_verified')),
-        'admin_verified':   bool(session.get('admin_verified'))
+        'logged_in': bool(session.get('username')),
+        'username': session.get('username', ''),
+        'role': session.get('user_role', 'Viewer'),
+        'school_office': session.get('school_office', '')
     })
-
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
-    pin_type = (request.json or {}).get('pin_type', 'all')
-    if pin_type == 'scanner':
-        session.pop('scanner_verified', None)
-    elif pin_type == 'admin':
-        session.pop('admin_verified', None)
-    else:
-        session.clear()
+    session.clear()
     return jsonify({'status': 'success'})
+
+# ── Update user profile (school_office) ──
+@app.route('/api/update_profile', methods=['POST'])
+@require_login
+def update_profile():
+    try:
+        data = request.json
+        school_office = data.get('school_office', '').strip()
+        username = session['username']
+        
+        conn = db_manager.get_db_connection()
+        conn.execute("UPDATE users SET school_office = ? WHERE username = ?", (school_office, username))
+        conn.commit()
+        conn.close()
+        
+        session['school_office'] = school_office
+        
+        return jsonify({'status': 'success', 'message': 'Profile updated!'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/get_user_profile', methods=['GET'])
+@require_login
+def get_user_profile():
+    try:
+        conn = db_manager.get_db_connection()
+        user = conn.execute("SELECT username, role, status, school_office FROM users WHERE username = ?", (session['username'],)).fetchone()
+        conn.close()
+        if user:
+            return jsonify({'status': 'success', 'user': dict(user)})
+        return jsonify({'status': 'error', 'message': 'User not found'}), 404
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# ─────────────────────────────────────────────
+#  ADMIN USER MANAGEMENT APIs
+# ─────────────────────────────────────────────
+@app.route('/api/admin/users', methods=['GET'])
+@require_admin
+def admin_get_users():
+    try:
+        conn = db_manager.get_db_connection()
+        rows = conn.execute("SELECT username, role, status, school_office FROM users").fetchall()
+        conn.close()
+        users = [dict(r) for r in rows]
+        return jsonify({'status': 'success', 'users': users})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/admin/approve_user/<username>', methods=['POST'])
+@require_admin
+def admin_approve_user(username):
+    try:
+        username = username.strip().lower()
+        data = request.json or {}
+        assigned_role = data.get('role', 'User')
+        
+        conn = db_manager.get_db_connection()
+        user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        if not user:
+            conn.close()
+            return jsonify({'status': 'error', 'message': 'User not found.'}), 404
+            
+        conn.execute("UPDATE users SET status = 'Approved', role = ? WHERE username = ?", (assigned_role, username))
+        conn.commit()
+        
+        # Get updated user dict for GSheets sync
+        updated_user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        conn.close()
+        
+        enabled = db_manager.get_setting('gsheets_enabled') == 'True'
+        sheet_id = db_manager.get_setting('gsheets_id')
+        creds = db_manager.get_decrypted_setting('gsheets_credentials')
+        if enabled and sheet_id and creds:
+            import threading
+            threading.Thread(target=db_manager.push_user_to_gsheets, args=(sheet_id, creds, dict(updated_user)), daemon=True).start()
+            
+        return jsonify({'status': 'success', 'message': f'Account "{username}" approved as {assigned_role}!'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/admin/reject_user/<username>', methods=['POST'])
+@require_admin
+def admin_reject_user(username):
+    try:
+        username = username.strip().lower()
+        
+        # Protect the admin account from being rejected/deleted
+        if username == 'admin':
+            return jsonify({'status': 'error', 'message': 'The Administrator account cannot be deleted.'}), 400
+            
+        conn = db_manager.get_db_connection()
+        conn.execute("DELETE FROM users WHERE username = ?", (username,))
+        conn.commit()
+        conn.close()
+        
+        # Note: In sheets we delete by updating status to 'Rejected' or simply updating sheet (will re-sync on bulk)
+        # We can push to sheets with 'Rejected' status to notify cloud
+        enabled = db_manager.get_setting('gsheets_enabled') == 'True'
+        sheet_id = db_manager.get_setting('gsheets_id')
+        creds = db_manager.get_decrypted_setting('gsheets_credentials')
+        if enabled and sheet_id and creds:
+            import threading
+            user_dict = {'username': username, 'password_hash': 'DELETED', 'role': 'None', 'status': 'Rejected', 'school_office': ''}
+            threading.Thread(target=db_manager.push_user_to_gsheets, args=(sheet_id, creds, user_dict), daemon=True).start()
+            
+        return jsonify({'status': 'success', 'message': f'Account request "{username}" rejected.'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# ── Change password (for first login or regular) ──
+@app.route('/api/change_password', methods=['POST'])
+@require_login
+def change_password():
+    try:
+        data = request.json
+        current_password = data.get('current_password', '').strip()
+        new_password = data.get('new_password', '').strip()
+        username = session['username']
+        
+        if not current_password or not new_password:
+            return jsonify({'status': 'error', 'message': 'Current and new password are required.'}), 400
+            
+        if len(new_password) < 6:
+            return jsonify({'status': 'error', 'message': 'New password must be at least 6 characters.'}), 400
+            
+        conn = db_manager.get_db_connection()
+        user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        
+        if not user:
+            conn.close()
+            return jsonify({'status': 'error', 'message': 'User not found.'}), 404
+            
+        cur_hash = hashlib.sha256(current_password.encode()).hexdigest()
+        if user['password_hash'] != cur_hash:
+            conn.close()
+            return jsonify({'status': 'error', 'message': 'Current password is incorrect.'}), 400
+            
+        new_hash = hashlib.sha256(new_password.encode()).hexdigest()
+        conn.execute("UPDATE users SET password_hash = ?, requires_password_change = 0 WHERE username = ?", (new_hash, username))
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'status': 'success', 'message': 'Password changed successfully!'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/admin/reset_passkey', methods=['POST'])
+@require_admin
+def admin_reset_passkey():
+    try:
+        data = request.json
+        target_username = data.get('username', '').strip().lower()
+        new_password = data.get('new_password', '').strip()
+        
+        if not target_username or not new_password:
+            return jsonify({'status': 'error', 'message': 'Username and new password are required.'}), 400
+            
+        conn = db_manager.get_db_connection()
+        user = conn.execute("SELECT * FROM users WHERE username = ?", (target_username,)).fetchone()
+        if not user:
+            conn.close()
+            return jsonify({'status': 'error', 'message': 'User not found.'}), 404
+            
+        new_hash = hashlib.sha256(new_password.encode()).hexdigest()
+        conn.execute("UPDATE users SET password_hash = ? WHERE username = ?", (new_hash, target_username))
+        conn.commit()
+        
+        # Get updated user dict for GSheets sync
+        updated_user = conn.execute("SELECT * FROM users WHERE username = ?", (target_username,)).fetchone()
+        conn.close()
+        
+        enabled = db_manager.get_setting('gsheets_enabled') == 'True'
+        sheet_id = db_manager.get_setting('gsheets_id')
+        creds = db_manager.get_decrypted_setting('gsheets_credentials')
+        if enabled and sheet_id and creds:
+            import threading
+            threading.Thread(target=db_manager.push_user_to_gsheets, args=(sheet_id, creds, dict(updated_user)), daemon=True).start()
+            
+        return jsonify({'status': 'success', 'message': f'Passkey for "{target_username}" reset successfully!'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 # ─────────────────────────────────────────────
@@ -781,6 +1085,7 @@ def barcode_overlay():
 #  SCAN LOGGING
 # ─────────────────────────────────────────────
 @app.route('/log_scan', methods=['POST'])
+@require_role('Admin', 'Supervisor')
 def log_scan():
     try:
         data             = request.json
@@ -813,18 +1118,21 @@ def log_scan():
                     stages = list(range(1, 11))
 
                 latest_office = latest_ts = None
+                latest_receiver = None
                 for i in sorted(stages, reverse=True):
                     key = f'receiving_office_{i}'
                     if key in row.keys() and row[key]:
                         latest_office = row[key]
+                        latest_receiver = row.get(f'receiver_name_{i}', '')
                         latest_ts     = row[f'timestamp_{i}']
                         break
 
-                if latest_office and latest_office.strip().lower() == receiving_office.lower():
+                if (latest_office and latest_office.strip().lower() == receiving_office.lower() and 
+                    latest_receiver and latest_receiver.strip().lower() == receiver_name.lower()):
                     conn.close()
                     return jsonify({
                         'status':  'warning',
-                        'message': f'Duplicate scan! Already received at "{latest_office}" on {latest_ts}.'
+                        'message': f'Duplicate scan! Already received at "{latest_office}" by "{latest_receiver}" on {latest_ts}.'
                     })
 
         # ── 2. LOG THE ROUTING STAMP ──────────────────────────────────────────
@@ -991,6 +1299,7 @@ def update_record(record_id):
         conn.commit()
         conn.close()
 
+        db_manager.queue_sync(record_id)
         db_manager.trigger_excel_export()
         return jsonify({'status': 'success', 'message': 'Record updated.'})
     except Exception as e:

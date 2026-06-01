@@ -118,6 +118,7 @@ def init_db():
         "school_office TEXT NOT NULL",
         "employee TEXT NOT NULL",
         "code TEXT NOT NULL",
+        "remarks TEXT",
     ]
     for i in range(1, 11):
         columns.append(f"receiving_office_{i} TEXT")
@@ -135,7 +136,43 @@ def init_db():
         )
     ''')
     
+    # 4. Users Table (with school_office, email, requires_password_change columns)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Pending',
+            school_office TEXT DEFAULT '',
+            email TEXT DEFAULT '',
+            requires_password_change INTEGER DEFAULT 0
+        )
+    ''')
+    
+    # Add columns if they don't exist (migration)
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN school_office TEXT DEFAULT ''")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN requires_password_change INTEGER DEFAULT 0")
+    except:
+        pass
+    
     conn.commit()
+    
+    # Seed default admin user if users table is empty
+    import hashlib
+    cursor.execute("SELECT COUNT(*) FROM users")
+    if cursor.fetchone()[0] == 0:
+        admin_hash = hashlib.sha256("admin123".encode()).hexdigest()
+        cursor.execute("INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ('admin', admin_hash, 'Admin', 'Approved', '', 'admin@deped.gov.ph', 0))
+        conn.commit()
     
     # 4. Migrate: add receiver_name columns to existing databases
     _migrate_add_receiver_names(conn)
@@ -144,6 +181,13 @@ def init_db():
     
     # Run data migrations (if old excel files exist and db is empty)
     migrate_from_excel()
+    
+    # Try to hydrate from GSheets if DB is empty
+    conn2 = get_db_connection()
+    if conn2.execute("SELECT COUNT(*) FROM routing_records").fetchone()[0] == 0:
+        print("Local DB empty, trying to pull from GSheets...")
+        pull_all_from_gsheets()
+    conn2.close()
     
     # Start Google Sheets background worker thread
     start_gsheets_worker()
@@ -154,6 +198,14 @@ def _migrate_add_receiver_names(conn):
     cursor = conn.cursor()
     cursor.execute("PRAGMA table_info(routing_records)")
     existing_cols = [row[1] for row in cursor.fetchall()]
+    
+    # Add remarks column if missing
+    if 'remarks' not in existing_cols:
+        try:
+            cursor.execute("ALTER TABLE routing_records ADD COLUMN remarks TEXT")
+            print("Migration: added remarks column to routing_records")
+        except Exception as e:
+            print(f"Migration warning (remarks): {e}")
     
     # Find all stage numbers from receiving_office_N columns
     stages = set()
@@ -200,7 +252,7 @@ def ensure_routing_columns(conn, stage):
     
     if changed:
         conn.commit()
-        print(f"Dynamically expanded SQLite routing schema → Stage {stage} columns added.")
+        print(f"Dynamically expanded SQLite schema → Stage {stage} columns added.")
     return changed
 
 
@@ -228,7 +280,8 @@ def trigger_excel_export():
             # Export code lookup
             df_lookup = pd.read_sql_query(
                 "SELECT code AS Code, department AS Department, school_office AS [School/Office], "
-                "employees AS Employees, doc_type AS [Doc Type], generated_at AS Generated FROM code_lookup",
+                "employees AS Employees, doc_type AS [Doc Type], generated_at AS Generated FROM code_lookup "
+                "ORDER BY generated_at DESC",
                 conn
             )
             df_lookup.to_excel(CODE_LOOKUP_EXCEL, index=False)
@@ -257,7 +310,7 @@ def trigger_excel_export():
                 if f"receiver_name_{i}" in cols:
                     sql += f", receiver_name_{i} AS [Receiver Name {i}]"
                 sql += f", timestamp_{i} AS [Timestamp {i}]"
-            sql += " FROM routing_records"
+            sql += " FROM routing_records ORDER BY id DESC"
             
             df_routing = pd.read_sql_query(sql, conn)
             df_routing.to_excel(ROUTING_RECORD_EXCEL, index=False)
@@ -388,8 +441,8 @@ def test_google_sheets_connection(sheet_id, service_account_json):
         except gspread.exceptions.WorksheetNotFound:
             ws = sh.add_worksheet(title="Routing Records", rows=1000, cols=50)
         
-        # Headers include receiver_name
-        headers = ["Department", "School/Office", "Employee", "Code"]
+        # Headers include receiver_name and remarks
+        headers = ["Department", "School/Office", "Employee", "Code", "Remarks"]
         for i in range(1, 11):
             headers += [f"Receiving Office {i}", f"Receiver Name {i}", f"Timestamp {i}"]
         
@@ -447,7 +500,7 @@ def push_row_to_gsheets(sheet_id, service_account_json, row_dict):
     if max_stage < 10:
         max_stage = 10
     
-    target_headers = ["Department", "School/Office", "Employee", "Code"]
+    target_headers = ["Department", "School/Office", "Employee", "Code", "Remarks"]
     for i in range(1, max_stage + 1):
         target_headers += [f"Receiving Office {i}", f"Receiver Name {i}", f"Timestamp {i}"]
     
@@ -455,7 +508,8 @@ def push_row_to_gsheets(sheet_id, service_account_json, row_dict):
         row_dict.get('department', ''),
         row_dict.get('school_office', ''),
         row_dict.get('employee', ''),
-        row_dict.get('code', '')
+        row_dict.get('code', ''),
+        row_dict.get('remarks', '')
     ]
     for i in range(1, max_stage + 1):
         row_data.append(row_dict.get(f'receiving_office_{i}') or "")
@@ -562,6 +616,23 @@ def bulk_sync_to_gsheets():
                 code = row['code'] if row['code'] else '?'
                 errors.append(f"Row {emp}/{code}: {str(e)[:100]}")
         
+        # Also bulk push code lookups
+        code_rows = conn.execute("SELECT * FROM code_lookup").fetchall()
+        for row in code_rows:
+            try:
+                push_code_to_gsheets(sheet_id, creds, dict(row))
+            except Exception:
+                pass
+                
+        # Also bulk push users
+        user_rows = conn.execute("SELECT * FROM users").fetchall()
+        for row in user_rows:
+            try:
+                push_user_to_gsheets(sheet_id, creds, dict(row))
+            except Exception:
+                pass
+
+        
         return count, errors
     except Exception as e:
         return 0, [str(e)]
@@ -636,3 +707,195 @@ def force_import_from_excel():
     
     conn.close()
     return imported_count
+def pull_all_from_gsheets(sheet_id=None, creds=None):
+    if not sheet_id or not creds:
+        enabled = get_setting('gsheets_enabled') == 'True'
+        if not enabled: return 0, ["GSheets sync disabled."]
+        sheet_id = get_setting('gsheets_id')
+        creds = get_decrypted_setting('gsheets_credentials')
+        if not sheet_id or not creds: return 0, ["Missing credentials."]
+        
+    import gspread
+    from google.oauth2.service_account import Credentials
+    import json
+    
+    try:
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds_dict = json.loads(creds)
+        credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(credentials)
+        sh = client.open_by_key(sheet_id)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        count = 0
+        
+        # Pull Routing Records
+        try:
+            ws_routing = sh.worksheet("Routing Records")
+            records = ws_routing.get_all_records()
+            for row in records:
+                code = str(row.get('Code', '')).strip()
+                emp = str(row.get('Employee', '')).strip()
+                if not code or not emp: continue
+                
+                dept = str(row.get('Department', '')).strip()
+                school = str(row.get('School/Office', '')).strip()
+                
+                cursor.execute("SELECT id FROM routing_records WHERE code = ? AND employee = ?", (code, emp))
+                exist = cursor.fetchone()
+                
+                remarks = str(row.get('Remarks', '')).strip()
+                vals = [dept, school, emp, code, remarks]
+                col_names = ['department', 'school_office', 'employee', 'code', 'remarks']
+                
+                for k, v in row.items():
+                    if 'Receiving Office' in k:
+                        idx = k.split()[-1]
+                        col_names.append(f"receiving_office_{idx}")
+                        vals.append(str(v) if v else "")
+                    elif 'Receiver Name' in k:
+                        idx = k.split()[-1]
+                        col_names.append(f"receiver_name_{idx}")
+                        vals.append(str(v) if v else "")
+                    elif 'Timestamp' in k:
+                        idx = k.split()[-1]
+                        col_names.append(f"timestamp_{idx}")
+                        vals.append(str(v) if v else "")
+                        
+                placeholders = ['?'] * len(vals)
+                
+                if exist:
+                    cursor.execute("DELETE FROM routing_records WHERE id = ?", (exist['id'],))
+                
+                sql = f"INSERT INTO routing_records ({', '.join(col_names)}) VALUES ({', '.join(placeholders)})"
+                cursor.execute(sql, vals)
+                count += 1
+        except gspread.exceptions.WorksheetNotFound:
+            pass
+            
+        # Pull Users
+        try:
+            ws_users = sh.worksheet("Users")
+            records = ws_users.get_all_records()
+            for row in records:
+                username = str(row.get('Username', '')).strip().lower()
+                if not username: continue
+                pw_hash = str(row.get('Password Hash', '')).strip()
+                role = str(row.get('Role', '')).strip()
+                status = str(row.get('Status', '')).strip()
+                school_office = str(row.get('School/Office', '')).strip()
+                email = str(row.get('Email', '')).strip()
+                cursor.execute("INSERT OR REPLACE INTO users (username, password_hash, role, status, school_office, email, requires_password_change) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                               (username, pw_hash, role, status, school_office, email, 0))
+        except gspread.exceptions.WorksheetNotFound:
+            pass
+
+        # Pull Code Lookup
+        try:
+            ws_code = sh.worksheet("Code Lookup")
+            records = ws_code.get_all_records()
+            for row in records:
+                code = str(row.get('Code', '')).strip()
+                if not code: continue
+                dept = str(row.get('Department', '')).strip()
+                school = str(row.get('School/Office', '')).strip()
+                employees = str(row.get('Employees', '')).strip()
+                doc_type = str(row.get('Doc Type', '')).strip()
+                gen = str(row.get('Generated', '')).strip()
+                
+                cursor.execute("INSERT OR REPLACE INTO code_lookup (code, department, school_office, employees, doc_type, generated_at) VALUES (?, ?, ?, ?, ?, ?)", (code, dept, school, employees, doc_type, gen))
+        except gspread.exceptions.WorksheetNotFound:
+            pass
+            
+        conn.commit()
+        conn.close()
+        return count, []
+    except Exception as e:
+        return 0, [str(e)]
+
+def push_code_to_gsheets(sheet_id, service_account_json, code_dict):
+    import gspread
+    from google.oauth2.service_account import Credentials
+    import json
+    
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds_dict = json.loads(service_account_json)
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    client = gspread.authorize(creds)
+    sh = client.open_by_key(sheet_id)
+    
+    try:
+        ws = sh.worksheet("Code Lookup")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="Code Lookup", rows=1000, cols=10)
+        headers = ["Code", "Department", "School/Office", "Employees", "Doc Type", "Generated"]
+        ws.insert_row(headers, 1)
+        ws.format("A1:F1", {"backgroundColor": {"red": 0.05, "green": 0.25, "blue": 0.45}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}})
+        
+    code_to_match = str(code_dict.get('code', '')).strip().upper()
+    all_rows = ws.get_all_values()
+    
+    match_row_num = None
+    for idx, row in enumerate(all_rows[1:], start=2):
+        if len(row) > 0 and str(row[0]).strip().upper() == code_to_match:
+            match_row_num = idx
+            break
+            
+    row_data = [
+        code_dict.get('code', ''),
+        code_dict.get('department', ''),
+        code_dict.get('school_office', ''),
+        code_dict.get('employees', ''),
+        code_dict.get('doc_type', ''),
+        code_dict.get('generated_at', '')
+    ]
+    
+    if match_row_num:
+        ws.update(range_name=f"A{match_row_num}:F{match_row_num}", values=[row_data])
+    else:
+        ws.append_row(row_data)
+
+
+def push_user_to_gsheets(sheet_id, service_account_json, user_dict):
+    import gspread
+    from google.oauth2.service_account import Credentials
+    import json
+    
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds_dict = json.loads(service_account_json)
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    client = gspread.authorize(creds)
+    sh = client.open_by_key(sheet_id)
+    
+    try:
+        ws = sh.worksheet("Users")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="Users", rows=1000, cols=10)
+        headers = ["Username", "Password Hash", "Role", "Status", "School/Office", "Email"]
+        ws.insert_row(headers, 1)
+        ws.format("A1:F1", {"backgroundColor": {"red": 0.05, "green": 0.25, "blue": 0.45}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}})
+        
+    username = str(user_dict.get('username', '')).strip().lower()
+    all_rows = ws.get_all_values()
+    
+    match_row_num = None
+    for idx, row in enumerate(all_rows[1:], start=2):
+        if len(row) > 0 and str(row[0]).strip().lower() == username:
+            match_row_num = idx
+            break
+            
+    row_data = [
+        user_dict.get('username', ''),
+        user_dict.get('password_hash', ''),
+        user_dict.get('role', ''),
+        user_dict.get('status', ''),
+        user_dict.get('school_office', ''),
+        user_dict.get('email', '')
+    ]
+    
+    if match_row_num:
+        ws.update(range_name=f"A{match_row_num}:F{match_row_num}", values=[row_data])
+    else:
+        ws.append_row(row_data)
