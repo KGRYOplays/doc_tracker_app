@@ -1,0 +1,2553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Barcode Generator & Document Tracker</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --secondary: #a855f7;
+            --accent: #ec4899;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            --glass-bg: rgba(30, 41, 59, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --glass-highlight: rgba(255, 255, 255, 0.03);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --radius-lg: 20px;
+            --radius-md: 12px;
+            --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            min-height: 100vh;
+            overflow-x: hidden;
+            line-height: 1.5;
+        }
+
+        .background-glows {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: -1;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .glow-1 {
+            position: absolute;
+            top: -20%;
+            left: -10%;
+            width: 60vw;
+            height: 60vw;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, transparent 70%);
+            filter: blur(80px);
+        }
+
+        .glow-2 {
+            position: absolute;
+            bottom: -20%;
+            right: -10%;
+            width: 60vw;
+            height: 60vw;
+            background: radial-gradient(circle, rgba(168, 85, 247, 0.15) 0%, transparent 70%);
+            filter: blur(80px);
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        /* HEADER */
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 3rem;
+            font-weight: 800;
+            background: linear-gradient(to right, #ffffff, #c084fc, #818cf8);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+            letter-spacing: -0.02em;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            font-weight: 400;
+        }
+
+        /* ── LOGIN GATE MODAL ─────────────────────────────────── */
+        #loginGate {
+            position: fixed;
+            inset: 0;
+            background: rgba(9, 11, 26, 0.97);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(20px);
+        }
+        .login-box {
+            background: rgba(30, 41, 59, 0.95);
+            border: 1px solid rgba(99,102,241,0.3);
+            border-radius: 24px;
+            padding: 45px 40px;
+            text-align: center;
+            max-width: 420px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            animation: expand 0.4s cubic-bezier(0.18,0.89,0.32,1.28);
+        }
+        .login-box .auth-icon { font-size: 3rem; margin-bottom: 12px; }
+        .login-box h2 { font-size: 1.6rem; font-weight: 800; margin-bottom: 4px; }
+        .login-box .auth-sub { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 24px; }
+        .login-box input, .login-box select {
+            width: 100%;
+            padding: 14px;
+            font-size: 1rem;
+            background: rgba(15,23,42,0.8);
+            border: 2px solid rgba(99,102,241,0.3);
+            border-radius: 12px;
+            color: white;
+            margin-bottom: 12px;
+            transition: all 0.3s;
+        }
+        .login-box input:focus, .login-box select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 20px rgba(99,102,241,0.3);
+        }
+        .login-box .auth-error {
+            color: var(--error);
+            font-weight: 600;
+            min-height: 22px;
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+        }
+        .login-box .btn-auth {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-size: 1.05rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 8px;
+        }
+        .login-box .btn-auth:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99,102,241,0.4); }
+        .login-box .auth-switch {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.85rem;
+            padding: 6px;
+        }
+        .login-box .auth-switch:hover { color: var(--primary); }
+        .login-box .auth-extra { font-size: 0.82rem; color: var(--text-muted); margin-top: 14px; }
+
+        .hidden { display: none !important; }
+        @keyframes expand {
+            from { transform: scale(0.85); opacity: 0; }
+            to   { transform: scale(1); opacity: 1; }
+        }
+
+        /* NAVIGATION TABS */
+        .nav-tabs {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 35px;
+            background: var(--glass-bg);
+            padding: 8px 12px;
+            border-radius: 40px;
+            border: 1px solid var(--glass-border);
+            backdrop-filter: blur(20px);
+            width: 100%;
+            flex-wrap: wrap;
+        }
+
+        .tab-link {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 10px 18px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 30px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+        }
+
+        .tab-link:hover {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .tab-link.active {
+            color: var(--text-main);
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+        }
+
+        .tab-link.hidden-tab, .nav-btn-scanner.hidden-tab { display: none; }
+
+        .nav-btn-scanner {
+            background: linear-gradient(135deg, #10b981, #059669) !important;
+            color: white !important;
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3) !important;
+            text-decoration: none;
+            border-radius: 30px;
+            padding: 10px 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+            white-space: nowrap;
+        }
+        
+        .nav-btn-scanner:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4) !important;
+        }
+
+        .user-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(99,102,241,0.15);
+            border: 1px solid rgba(99,102,241,0.3);
+            border-radius: 30px;
+            padding: 5px 14px;
+            font-size: 0.8rem;
+            white-space: nowrap;
+        }
+        .user-badge button {
+            background: rgba(239,68,68,0.2);
+            border: 1px solid rgba(239,68,68,0.3);
+            color: #f87171;
+            border-radius: 20px;
+            padding: 2px 10px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .user-badge button:hover { background: rgba(239,68,68,0.4); }
+
+        /* CARD STYLE */
+        .glass-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(20px);
+            margin-bottom: 30px;
+            position: relative;
+            overflow: hidden;
+            width: 100%;
+            max-width: 100%;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.15), transparent);
+        }
+
+        .card-title-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 25px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding-bottom: 15px;
+        }
+
+        .card-icon {
+            width: 44px;
+            height: 44px;
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: var(--primary);
+        }
+
+        .card-title-row h2 {
+            font-size: 1.4rem;
+            font-weight: 700;
+        }
+
+        /* GRID LAYOUTS */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 15px;
+        }
+
+        /* FORMS */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        select, input, textarea {
+            width: 100%;
+            padding: 14px 18px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-md);
+            color: var(--text-main);
+            font-size: 1rem;
+            font-family: inherit;
+            transition: all 0.3s ease;
+        }
+
+        select:focus, input:focus, textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            background: rgba(15, 23, 42, 0.8);
+            box-shadow: 0 0 15px rgba(99, 102, 241, 0.25);
+        }
+
+        select option {
+            background: #1e293b;
+            color: var(--text-main);
+        }
+
+        .or-divider {
+            text-align: center;
+            position: relative;
+            margin: 25px 0;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .or-divider::before, .or-divider::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 45%;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.08);
+        }
+        .or-divider::before { left: 0; }
+        .or-divider::after { right: 0; }
+
+        /* BUTTONS */
+        .btn {
+            padding: 15px 28px;
+            border: none;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 700;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            width: 100%;
+            text-decoration: none;
+        }
+
+        .btn-add {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+            color: var(--warning);
+        }
+
+        .btn-add:hover {
+            background: var(--warning);
+            color: #0f172a;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.2);
+        }
+
+        .btn-generate {
+            background: linear-gradient(135deg, var(--success), #059669);
+            color: white;
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.25);
+        }
+
+        .btn-generate:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.25);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--glass-border);
+            color: var(--text-main);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        /* SCROLLABLE EMP LIST */
+        .list-container {
+            background: rgba(15, 23, 42, 0.4);
+            border-radius: var(--radius-md);
+            padding: 20px;
+            margin-top: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .list-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .count-badge {
+            background: var(--accent);
+            color: white;
+            padding: 3px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 700;
+        }
+
+        #employee_list {
+            list-style: none;
+            max-height: 250px;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+
+        #employee_list::-webkit-scrollbar {
+            width: 6px;
+        }
+        #employee_list::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        #employee_list li {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .emp-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .emp-badge {
+            background: rgba(99, 102, 241, 0.2);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            color: #a5b4fc;
+            padding: 2px 10px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .remove-btn {
+            cursor: pointer;
+            color: var(--error);
+            font-weight: bold;
+            font-size: 1.2rem;
+            transition: transform 0.2s ease;
+        }
+        .remove-btn:hover {
+            transform: scale(1.2);
+        }
+
+        .empty-list {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 30px 0;
+            font-style: italic;
+        }
+
+        /* DYNAMIC TABS PANEL */
+        .tab-panel {
+            display: none;
+        }
+
+        .tab-panel.active {
+            display: block;
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* GENERATED RESULT */
+        #qr_result {
+            margin-top: 25px;
+            text-align: center;
+            padding: 30px;
+            background: rgba(15, 23, 42, 0.4);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-lg);
+            display: none;
+        }
+        
+        #qr_result.active {
+            display: block;
+            animation: expand 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+        }
+
+        @keyframes expand {
+            from { transform: scale(0.9); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+
+        #qr_result img {
+            border: 5px solid white;
+            border-radius: var(--radius-md);
+            max-width: 250px;
+            box-shadow: var(--shadow);
+            background: white;
+            margin-bottom: 20px;
+        }
+
+        .qr-success {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--success);
+            margin-bottom: 15px;
+        }
+
+        .btn-add-sheet {
+            background: linear-gradient(135deg, var(--secondary), var(--accent));
+            color: white;
+            box-shadow: 0 4px 15px rgba(168, 85, 247, 0.25);
+            margin-bottom: 10px;
+        }
+
+        /* PRINT SHEET GRID */
+        .sheet-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 25px;
+        }
+
+        .sheet-item {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: var(--radius-md);
+            padding: 15px;
+            text-align: center;
+            position: relative;
+            color: #0f172a;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+
+        .sheet-item img {
+            max-width: 100%;
+            height: auto;
+            margin-bottom: 10px;
+        }
+
+        .sheet-code {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700;
+            font-size: 1.1rem;
+            letter-spacing: 0.05em;
+        }
+
+        .sheet-remove {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--error);
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            transition: transform 0.2s ease;
+        }
+        .sheet-remove:hover {
+            transform: scale(1.1);
+        }
+
+        /* SEARCHABLE DATATABLE */
+        .table-actions {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .search-wrapper {
+            flex: 1;
+            min-width: 250px;
+            position: relative;
+        }
+
+        .search-wrapper input {
+            padding-left: 45px;
+        }
+
+        .search-wrapper::before {
+            content: '🔍';
+            position: absolute;
+            left: 18px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 1rem;
+            opacity: 0.6;
+        }
+
+        #recordsTableContainer {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: auto;
+            overflow-y: auto;
+            max-height: 75vh;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--glass-border);
+            background: rgba(15, 23, 42, 0.4);
+        }
+
+        #recordsTableContainer::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        #recordsTableContainer::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+        #recordsTableContainer::-webkit-scrollbar-thumb {
+            background: rgba(99, 102, 241, 0.5);
+            border-radius: 4px;
+        }
+        #recordsTableContainer::-webkit-scrollbar-thumb:hover {
+            background: rgba(99, 102, 241, 0.8);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.75rem;
+        }
+
+        th {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: rgba(30, 41, 59, 0.95);
+            backdrop-filter: blur(10px);
+            color: #a5b4fc;
+            padding: 10px 10px;
+            font-weight: 600;
+            border-bottom: 1.5px solid var(--glass-border);
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+            white-space: nowrap;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        td {
+            padding: 8px 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            white-space: nowrap;
+            font-size: 0.75rem;
+            text-align: center;
+        }
+
+        tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .table-code {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700;
+            color: var(--secondary);
+            background: rgba(168, 85, 247, 0.1);
+            border: 1px solid rgba(168, 85, 247, 0.2);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .table-office-badge {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: var(--success);
+            padding: 4px 10px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            display: inline-block;
+        }
+
+        .table-time {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        /* SETTINGS */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 25px;
+            padding: 15px 20px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-md);
+        }
+
+        .toggle-label {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(255, 255, 255, 0.1);
+            transition: .4s;
+            border-radius: 34px;
+            border: 1px solid var(--glass-border);
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--success);
+        }
+
+        input:focus + .slider {
+            box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+
+        /* ALERTS */
+        .alert {
+            padding: 15px 20px;
+            border-radius: var(--radius-md);
+            margin-bottom: 20px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from { transform: translateY(-10px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .alert-success {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid var(--success);
+            color: #34d399;
+        }
+
+        .alert-error {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid var(--error);
+            color: #f87171;
+        }
+
+        .alert-info {
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid var(--primary);
+            color: #818cf8;
+        }
+
+        .btn-add-all {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: var(--success);
+            margin-bottom: 5px;
+        }
+
+        .btn-add-all:hover {
+            background: var(--success);
+            color: #0f172a;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.2);
+        }
+
+        .btn-add-all:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        .school-status {
+            font-size: 0.85rem;
+            margin-top: 4px;
+            margin-bottom: 8px;
+            min-height: 1.2em;
+        }
+
+        .school-status.valid {
+            color: var(--success);
+        }
+
+        .school-status.invalid {
+            color: var(--text-muted);
+        }
+
+        /* PRINT MEDIA STYLING */
+        @media print {
+            body * {
+                visibility: hidden;
+            }
+            .sheet-grid, .sheet-grid * {
+                visibility: visible;
+            }
+            .sheet-grid {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                display: grid !important;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 15px;
+                padding: 15px;
+                background: white;
+            }
+            .sheet-item {
+                border: 2px solid black !important;
+                page-break-inside: avoid;
+                background: white !important;
+                box-shadow: none !important;
+            }
+            .sheet-remove, .no-print {
+                display: none !important;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="background-glows">
+        <div class="glow-1"></div>
+        <div class="glow-2"></div>
+    </div>
+
+    <!-- ═══════════════ LOGIN GATE ═══════════════ -->
+    <div id="loginGate">
+        <div class="login-box">
+            <div id="loginView">
+                <div class="auth-icon">🔐</div>
+                <h2>Welcome</h2>
+                <p class="auth-sub">Sign in to access the Document Routing System</p>
+                <div class="auth-error" id="loginError"></div>
+                <input type="text" id="loginUsername" placeholder="Username" autocomplete="username"
+                       onkeypress="if(event.key==='Enter') document.getElementById('loginPassword').focus()">
+                <input type="password" id="loginPassword" placeholder="Passkey" autocomplete="current-password"
+                       onkeypress="if(event.key==='Enter') submitLogin()">
+                <button class="btn-auth" onclick="submitLogin()">🔓 Sign In</button>
+                <button class="btn-auth" onclick="guestLogin()" style="background:linear-gradient(135deg,#10b981,#059669);margin-bottom:4px;">👁️ Sign in as Guest (Read-Only Records)</button>
+                <button class="auth-switch" onclick="showRegister()">Don't have an account? Register here</button>
+            </div>
+            <div id="registerView" class="hidden">
+                <div class="auth-icon">📝</div>
+                <h2>Create Account</h2>
+                <p class="auth-sub">Register for a new account (needs admin approval)</p>
+                <div class="auth-error" id="registerError"></div>
+                <input type="text" id="regUsername" placeholder="Username">
+                <select id="regRole">
+                    <option value="User">User</option>
+                    <option value="Supervisor">Supervisor</option>
+                </select>
+                <input type="text" id="regSchool" placeholder="School/Office *" list="regSchoolsList" required>
+                <datalist id="regSchoolsList"></datalist>
+                <input type="email" id="regEmail" placeholder="Email (@deped.gov.ph) *" pattern=".+@deped\.gov\.ph" 
+                       title="Must be a @deped.gov.ph email address" required>
+                <button class="btn-auth" onclick="submitRegistration()">📝 Register</button>
+                <button class="auth-switch" onclick="showLogin()">Already have an account? Sign in</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="container" id="mainContent" style="display:none;">
+        <header>
+            <h1>🏢 Notice Of Salary Adjustment/ Step Increment Tracking System</h1>
+            <p class="subtitle">Developed by: Alfred Lee C. Bautista</p>
+        </header>
+
+        <!-- NAVIGATION -->
+        <div class="nav-tabs no-print">
+            <span class="user-badge" id="userBadge">
+                <span>👤 <span id="navUsername"></span></span>
+                <span id="navRole" style="color:#a5b4fc; font-weight:700;"></span>
+                <span id="navSchool" style="color:var(--text-muted); font-size:0.75rem;"></span>
+                <button onclick="performLogout()">Logout</button>
+            </span>
+
+            <button class="tab-link active" id="tab-btn-generator" onclick="switchTab('tab-generator')">🏷️ Generator</button>
+            <button class="tab-link" id="tab-btn-records" onclick="switchTab('tab-records')">📋 Records</button>
+            <button class="tab-link hidden-tab" id="tab-btn-admin" onclick="switchTab('tab-admin')">🔒 Admin Panel</button>
+            <a href="/scanner" class="nav-btn-scanner" id="tab-btn-scanner">📷 Scanner →</a>
+        </div>
+
+        <div id="alert-container" class="no-print"></div>
+
+        <!-- ════ TAB 1: CODE GENERATOR ════ -->
+        <div id="tab-generator" class="tab-panel active">
+            <div class="grid-2">
+                <!-- FORM BLOCK -->
+                <div class="glass-card">
+                    <div class="card-title-row">
+                        <div class="card-icon">👥</div>
+                        <h2>Create Employee Batch</h2>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Select Department</label>
+                        <select id="deptSelect" onchange="loadSchools()">
+                            <option value="">-- Select Department --</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Select School / Office</label>
+                        <input type="text" id="schoolInput" list="schoolsListGenerator" oninput="onSchoolInput()" placeholder="Type or select school/office...">
+                        <datalist id="schoolsListGenerator"></datalist>
+                        <div id="schoolStatus" class="school-status invalid">Type and select a valid school</div>
+                        <button id="addAllBtn" class="btn btn-add-all" onclick="addAllEmployees()" disabled>📋 Add All Employees from this School</button>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Select Employee</label>
+                        <input type="text" id="employeeInput" list="employeesListGenerator" placeholder="Type or select employee...">
+                        <datalist id="employeesListGenerator"></datalist>
+                    </div>
+
+                    <div class="or-divider">— OR REGISTER NEW —</div>
+
+                    <div class="form-group">
+                        <label>Custom Employee Name</label>
+                        <input type="text" id="newEmpName" placeholder="Enter name...">
+                    </div>
+
+                    <button class="btn btn-add" onclick="addToList()">➕ Add Employee to List</button>
+
+                    <div class="list-container">
+                        <div class="list-header-row">
+                            <strong>Ready to Code Batch</strong>
+                            <span id="listCount" class="count-badge">0</span>
+                        </div>
+                        <ul id="employee_list">
+                            <li class="empty-list">Add employees to compile list...</li>
+                        </ul>
+                        <button class="btn btn-secondary" onclick="clearList()" style="margin-top:10px; padding:8px 15px; font-size:0.9rem;">Clear Batch</button>
+                    </div>
+                </div>
+
+                <!-- GENERATE CONTROLS -->
+                <div class="glass-card">
+                    <div class="card-title-row">
+                        <div class="card-icon">🎨</div>
+                        <h2>Generate Settings</h2>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Display Format</label>
+                        <div style="display:flex; gap:10px;">
+                            <button id="btn-barcode" class="btn btn-primary" onclick="setCodeType('barcode')" style="flex:1;">Barcode (Linear)</button>
+                            <button id="btn-qr" class="btn btn-secondary" onclick="setCodeType('qr')" style="flex:1;">QR Code</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Document Description / Type</label>
+                        <input type="text" id="docType" placeholder="e.g. Service Records, Contract, Clearance">
+                    </div>
+
+                    <button class="btn btn-generate" onclick="generateCode()" style="margin-top:10px;">⚡ Compile & Generate Code</button>
+
+                    <div id="qr_result">
+                        <div class="qr-success">🎉 Code Created Successfully!</div>
+                        <img id="codeImage" src="" alt="Code Result">
+                        <p style="font-family:'JetBrains Mono', monospace; font-size:1.2rem; font-weight:700; margin-bottom:20px;" id="codeText"></p>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                            <button class="btn btn-add-sheet" onclick="addToPrintSheet()" style="flex:1;">➕ Add to Print Sheet</button>
+                            <button class="btn btn-primary" onclick="downloadBarcodeOverlay()" style="flex:1;">🖨️ Print Barcode Overlay</button>
+                        </div>
+                        <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
+                            <select id="overlayPosition" style="flex:1; padding:10px; background:rgba(15,23,42,0.6); border:1px solid var(--glass-border); border-radius:var(--radius-md); color:var(--text-main);">
+                                <option value="top-right">Top-Right Corner</option>
+                                <option value="top-left">Top-Left Corner</option>
+                                <option value="bottom-right">Bottom-Right Corner</option>
+                                <option value="bottom-left">Bottom-Left Corner</option>
+                            </select>
+                            <select id="overlayPageSize" style="flex:1; padding:10px; background:rgba(15,23,42,0.6); border:1px solid var(--glass-border); border-radius:var(--radius-md); color:var(--text-main);">
+                                <option value="legal">Legal (8.5 x 13)</option>
+                                <option value="letter">Letter (8.5 x 11)</option>
+                            </select>
+                        </div>
+                        <p style="font-size:0.85rem; color:var(--text-muted); margin-top:12px;">
+                            Opens the print dialog with a blank page (Legal size by default) and ONLY the barcode at your chosen corner position. Print this onto your already-printed document.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PRINT CARDS SHEET -->
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">🖨️</div>
+                    <h2>Barcode Print Sheet Layout (<span id="sheetCount">0</span> codes)</h2>
+                </div>
+                <div class="table-actions no-print">
+                    <button class="btn btn-primary" onclick="printSheet()" style="width:auto;">🖨️ Print Layout Sheet</button>
+                    <button class="btn btn-add-sheet" onclick="batchPrintPDF()" style="width:auto;">📥 Batch Export as PDF (1.5" Labels)</button>
+                    <button class="btn btn-secondary" onclick="clearSheet()" style="width:auto;">🗑️ Clear All Barcodes</button>
+                </div>
+                <div class="sheet-grid" id="sheetGrid">
+                    <div class="empty-list" style="grid-column: span 10; text-align: center; width: 100%;">No barcodes added to print sheet yet.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════ TAB 2: ROUTING RECORDS ════ -->
+        <div id="tab-records" class="tab-panel">
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">📋</div>
+                    <h2>Document Routing Log</h2>
+                </div>
+
+                <div class="table-actions">
+                    <div class="search-wrapper">
+                        <input type="text" id="tableSearch" onkeyup="filterTable()" placeholder="Search employee, department, code, or receiving office...">
+                    </div>
+                    <button class="btn btn-secondary" onclick="changePage(-1)" style="width:auto; height: 50px;">◀ Previous</button>
+                    <span id="pageIndicator" style="display:flex; align-items:center; padding:0 15px; font-weight:bold;">Page 1</span>
+                    <button class="btn btn-secondary" onclick="changePage(1)" style="width:auto; height: 50px;">Next ▶</button>
+                    <button class="btn btn-secondary" onclick="loadRoutingRecords()" style="width:auto; height: 50px;">🔄 Refresh</button>
+                </div>
+
+                <div id="recordsTableContainer" class="table-container">
+                    <table id="recordsTable">
+                        <thead>
+                            <tr id="recordsTableHeaders">
+                                <th>Department</th>
+                                <th>School/Office</th>
+                                <th>Employee</th>
+                                <th>Barcode Code</th>
+                                <th>Receiving Office</th>
+                                <th>Receiver</th>
+                                <th>Timestamp</th>
+                                <th>Remarks</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recordsTableBody">
+                            <tr>
+                                <td colspan="9" class="empty-list" style="text-align:center;">Loading routing data...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════ TAB 3: ADMIN PANEL ════ -->
+        <div id="tab-admin" class="tab-panel">
+            <!-- ADMIN: Dashboard Overview -->
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">📊</div>
+                    <h2>System Overview</h2>
+                </div>
+                <div class="grid-2">
+                    <div style="background: rgba(255,255,255,0.02); border:1px solid var(--glass-border); padding:25px; border-radius:var(--radius-md); text-align:center;">
+                        <h3 style="color:var(--text-muted); font-size:1rem; text-transform:uppercase; margin-bottom:10px;">Total Barcodes Generated</h3>
+                        <p id="stat-total-barcodes" style="font-size:3rem; font-weight:800; color:var(--primary);">0</p>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.02); border:1px solid var(--glass-border); padding:25px; border-radius:var(--radius-md); text-align:center;">
+                        <h3 style="color:var(--text-muted); font-size:1rem; text-transform:uppercase; margin-bottom:10px;">Employees Under Tracking</h3>
+                        <p id="stat-total-employees" style="font-size:3rem; font-weight:800; color:var(--secondary);">0</p>
+                    </div>
+                </div>
+                <div style="margin-top:20px;">
+                    <p style="color:var(--text-muted); margin-bottom:15px;">Quick actions for administrators:</p>
+                    <button class="btn btn-secondary" onclick="reloadFromExcel()" style="width:auto;">📥 Reload from Excel</button>
+                </div>
+            </div>
+
+            <!-- ADMIN: User Management -->
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">👥</div>
+                    <h2>User Management</h2>
+                </div>
+                <div class="table-actions no-print">
+                    <button class="btn btn-primary" onclick="loadAdminUsers()" style="width:auto;">🔄 Refresh Users</button>
+                </div>
+                <table id="adminUsersTable" style="width:100%; margin-top:15px;">
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Role</th>
+                            <th>School/Office</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="adminUsersBody">
+                        <tr><td colspan="5" class="empty-list" style="text-align:center;">Load users to manage.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- ADMIN: Google Sheets Settings -->
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">⚙️</div>
+                    <h2>Google Sheets Integration</h2>
+                </div>
+
+                <div class="toggle-container">
+                    <span class="toggle-label">Activate Live Google Sheets Sync</span>
+                    <label class="switch">
+                        <input type="checkbox" id="gsheets_enabled" onchange="saveSettings()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label>Google Sheet ID</label>
+                    <input type="text" id="gsheets_id" placeholder="Enter Google Sheet ID" onchange="saveSettings()">
+                </div>
+
+                <div class="form-group">
+                    <label>Service Account Credentials (JSON)</label>
+                    <textarea id="gsheets_credentials" rows="5" placeholder='{"type": "service_account", "project_id": "...", "private_key": "...", "client_email": "...", ...}' style="font-family:'JetBrains Mono', monospace; font-size:0.8rem;"></textarea>
+                </div>
+
+                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:15px;">
+                    <button class="btn btn-secondary" onclick="saveSettingsWithCreds()" style="width:auto; padding:10px 20px;">💾 Save Settings</button>
+                    <button class="btn btn-secondary" onclick="testSheetConnection()" style="width:auto; padding:10px 20px;">🔌 Test Connection</button>
+                    <button class="btn btn-add-sheet" onclick="bulkSyncSheets()" id="bulkSyncBtn" style="width:auto; padding:10px 20px; margin-bottom:0;">📤 Bulk Sync</button>
+                </div>
+
+                <div id="configStatus" style="padding:15px; background:rgba(255,255,255,0.02); border:1px solid var(--glass-border); border-radius:var(--radius-md); margin-bottom:15px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                        <div>
+                            <span id="credStatus" style="color:var(--success); font-weight:600;">✅ Credentials configured</span>
+                            <span id="credMissing" style="color:var(--warning); font-weight:600;">⚠️ No credentials</span>
+                            <span style="color:var(--text-muted); margin-left:10px;">| Sheet ID:</span>
+                            <code id="sheetIdDisplay" style="color:var(--secondary); font-family:'JetBrains Mono', monospace; margin-left:5px;"></code>
+                        </div>
+                    </div>
+                    <div style="margin-top:10px;">
+                        <span id="bulkSyncStatus" style="font-size:0.85rem; color:var(--text-muted);"></span>
+                    </div>
+                </div>
+
+                <div style="padding:10px 0;">
+                    <p style="color:var(--text-muted); font-size:0.85rem;">
+                        <strong>🔒 Security Note:</strong> Your service account credentials are encrypted in the database.
+                    </p>
+                </div>
+            </div>
+        
+            <!-- ADMIN: Local-Cloud Sync -->
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">🔄</div>
+                    <h2>Local ↔ Cloud Database Sync</h2>
+                </div>
+                <p style="color:var(--text-muted); margin-bottom:20px; font-size:0.9rem;">
+                    Sync your local database (<code>127.0.0.1:5000</code>) to the Render cloud instance. 
+                    Use this when working offline and you want to push your data to the cloud.
+                </p>
+                
+                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px;">
+                    <button class="btn btn-primary" onclick="exportLocalDB()" id="btnExport" style="width:auto; padding:10px 20px;">
+                        📥 Export Local Database
+                    </button>
+                    <button class="btn btn-secondary" onclick="document.getElementById('importFileInput').click()" style="width:auto; padding:10px 20px;">
+                        📤 Import Database (from JSON)
+                    </button>
+                    <input type="file" id="importFileInput" accept=".json" style="display:none;" onchange="importLocalDB(this)">
+                    <button class="btn btn-generate" onclick="showCloudPushDialog()" id="btnPushCloud" style="width:auto; padding:10px 20px;">
+                        ☁️ Push to Cloud
+                    </button>
+                </div>
+                
+                <div id="syncStatus" style="padding:15px; background:rgba(255,255,255,0.02); border:1px solid var(--glass-border); border-radius:var(--radius-md); min-height:40px;">
+                    <span style="color:var(--text-muted); font-size:0.85rem;">Ready. Choose an action above.</span>
+                </div>
+            </div>
+
+    <!-- Cloud Push Dialog (hidden) -->
+    <div id="cloudPushDialog" class="hidden" style="position:fixed;inset:0;background:rgba(9,11,26,0.95);z-index:20000;display:flex;align-items:center;justify-content:center;">
+        <div style="background:rgba(30,41,59,0.95);border:1px solid #6366f1;border-radius:20px;padding:40px;max-width:480px;width:90%;text-align:center;">
+            <div style="font-size:2.5rem;margin-bottom:12px;">☁️</div>
+            <h2 style="margin-bottom:4px;">Push to Cloud</h2>
+            <p style="color:var(--text-muted);margin-bottom:20px;font-size:0.9rem;">Enter your Render cloud app URL</p>
+            <input type="text" id="cloudUrlInput" placeholder="https://doc-tracker-app.onrender.com" 
+                   style="width:100%;padding:14px;font-size:1rem;background:rgba(15,23,42,0.8);border:2px solid #6366f1;border-radius:12px;color:white;margin-bottom:16px;text-align:center;"
+                   value="https://doc-tracker-app.onrender.com">
+            <button onclick="executePushToCloud()" style="width:100%;padding:14px;background:linear-gradient(135deg,#6366f1,#a855f7);border:none;border-radius:12px;color:white;font-weight:700;cursor:pointer;margin-bottom:8px;">
+                🚀 Push Now
+            </button>
+            <button onclick="document.getElementById('cloudPushDialog').style.display='none'" style="background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:0.85rem;">
+                Cancel
+            </button>
+        </div>
+    </div>
+
+</div>
+    </div>
+
+    <script>
+        var addedEmployees = [];
+        var codeType = 'barcode';
+        var printSheetData = [];
+        var currentCode = '';
+        var currentImage = '';
+        var currentPage = 1;
+        var currentUserRole = '';
+        var currentSchool = '';
+
+        // ── AUTH GATE ────────────────────────────────────────────────
+        window.onload = function() {
+            // Check if user is already logged in
+            fetch('/api/check_auth')
+            .then(r => r.json())
+            .then(data => {
+                if (data.logged_in && data.role !== 'Viewer') {
+                    currentUserRole = data.role;
+                    currentSchool = data.school_office || '';
+                    document.getElementById('mainContent').style.display = 'block';
+                    document.getElementById('loginGate').style.display = 'none';
+                    document.getElementById('navUsername').textContent = data.username;
+                    document.getElementById('navRole').textContent = data.role;
+                    document.getElementById('navSchool').textContent = data.school_office ? '· ' + data.school_office : '';
+                    
+                    // Show/hide tabs based on role
+                    setupRoleBasedTabs(data.role);
+                    
+                    // Check if admin for admin tab visibility
+                    loadDepartments();
+                    loadRoutingRecords();
+                    if (data.role === 'Admin') {
+                        loadSettings();
+                        loadAdminUsers();
+                    }
+                }
+                // Otherwise login gate stays visible
+            })
+            .catch(() => {});
+        };
+
+        function setupRoleBasedTabs(role) {
+            // Admin: sees generator + records + admin panel + scanner
+            // Supervisor: sees generator + records + scanner
+            // User: sees generator + records + scanner
+            // Guest: sees ONLY records (read-only view)
+            
+            const adminBtn = document.getElementById('tab-btn-admin');
+            const genBtn = document.getElementById('tab-btn-generator');
+            const recBtn = document.getElementById('tab-btn-records');
+            const scannerLink = document.getElementById('tab-btn-scanner');
+            
+            if (role === 'Admin') {
+                adminBtn.classList.remove('hidden-tab');
+                genBtn.classList.remove('hidden-tab');
+                recBtn.classList.remove('hidden-tab');
+                scannerLink.classList.remove('hidden-tab');
+                switchTab('tab-generator');
+            } else if (role === 'Guest') {
+                adminBtn.classList.add('hidden-tab');
+                genBtn.classList.add('hidden-tab');
+                recBtn.classList.remove('hidden-tab');
+                scannerLink.classList.add('hidden-tab');
+                switchTab('tab-records');
+            } else {
+                adminBtn.classList.add('hidden-tab');
+                genBtn.classList.remove('hidden-tab');
+                recBtn.classList.remove('hidden-tab');
+                scannerLink.classList.remove('hidden-tab');
+                switchTab('tab-generator');
+            }
+        }
+        
+        function guestLogin() {
+            fetch('/api/guest_login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    currentUserRole = 'Guest';
+                    currentSchool = '';
+                    document.getElementById('mainContent').style.display = 'block';
+                    document.getElementById('loginGate').style.display = 'none';
+                    document.getElementById('navUsername').textContent = 'Guest';
+                    document.getElementById('navRole').textContent = 'Guest';
+                    document.getElementById('navSchool').textContent = '· Read-Only';
+                    
+                    setupRoleBasedTabs('Guest');
+                    loadRoutingRecords();
+                }
+            })
+            .catch(() => {});
+        }
+
+        // ── LOGIN / REGISTER ─────────────────────────────────────────
+        function showRegister() {
+            document.getElementById('loginView').classList.add('hidden');
+            document.getElementById('registerView').classList.remove('hidden');
+            document.getElementById('registerError').textContent = '';
+            // Load schools for registration dropdown
+            fetch('/api/get_all_schools')
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    const dl = document.getElementById('regSchoolsList');
+                    dl.innerHTML = '';
+                    data.schools.forEach(s => {
+                        const opt = document.createElement('option');
+                        opt.value = s;
+                        dl.appendChild(opt);
+                    });
+                }
+            });
+        }
+
+        function showLogin() {
+            document.getElementById('registerView').classList.add('hidden');
+            document.getElementById('loginView').classList.remove('hidden');
+            document.getElementById('loginError').textContent = '';
+        }
+
+        function submitLogin() {
+            const username = document.getElementById('loginUsername').value.trim();
+            const password = document.getElementById('loginPassword').value.trim();
+            const errEl = document.getElementById('loginError');
+            if (!username || !password) { errEl.textContent = 'Please enter both username and passkey.'; return; }
+            errEl.textContent = '';
+
+            fetch('/api/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username, password})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    currentUserRole = data.user.role;
+                    currentSchool = data.user.school_office || '';
+                    document.getElementById('mainContent').style.display = 'block';
+                    document.getElementById('loginGate').style.display = 'none';
+                    document.getElementById('navUsername').textContent = data.user.username;
+                    document.getElementById('navRole').textContent = data.user.role;
+                    document.getElementById('navSchool').textContent = data.user.school_office ? '· ' + data.user.school_office : '';
+                    
+                    setupRoleBasedTabs(data.user.role);
+                    
+                    loadDepartments();
+                    loadRoutingRecords();
+                    if (data.user.role === 'Admin') {
+                        loadSettings();
+                        loadAdminUsers();
+                    }
+                } else {
+                    errEl.textContent = data.message || 'Login failed.';
+                }
+            })
+            .catch(() => {
+                errEl.textContent = 'Network error. Is the server running?';
+            });
+        }
+
+        function submitRegistration() {
+            const username = document.getElementById('regUsername').value.trim();
+            const role = document.getElementById('regRole').value;
+            const school = document.getElementById('regSchool').value.trim();
+            const email = document.getElementById('regEmail').value.trim();
+            const errEl = document.getElementById('registerError');
+            
+            if (!username) {
+                errEl.textContent = 'Username is required.';
+                return;
+            }
+            if (username.includes(' ')) {
+                errEl.textContent = 'Username must not contain spaces.';
+                return;
+            }
+            if (!school) {
+                errEl.textContent = 'School/Office is required.';
+                return;
+            }
+            if (!email.endsWith('@deped.gov.ph')) {
+                errEl.textContent = 'Only @deped.gov.ph email addresses are allowed.';
+                return;
+            }
+            errEl.textContent = '';
+
+            fetch('/api/register', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username, role, school_office: school, email: email})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert(data.message);
+                    showLogin();
+                    document.getElementById('regUsername').value = '';
+                    document.getElementById('regSchool').value = '';
+                    document.getElementById('regEmail').value = '';
+                } else {
+                    errEl.textContent = data.message || 'Registration failed.';
+                }
+            })
+            .catch(() => {
+                errEl.textContent = 'Network error.';
+            });
+        }
+
+        function performLogout() {
+            fetch('/api/logout', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})
+            .then(() => {
+                document.getElementById('mainContent').style.display = 'none';
+                document.getElementById('loginGate').style.display = 'flex';
+                document.getElementById('loginUsername').value = '';
+                document.getElementById('loginPassword').value = '';
+                document.getElementById('loginError').textContent = '';
+            });
+        }
+
+        // ── TAB SWITCHING ────────────────────────────────────────────
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
+            
+            document.getElementById(tabId).classList.add('active');
+            
+            document.querySelectorAll('.tab-link').forEach(l => {
+                if (l.getAttribute('onclick') && l.getAttribute('onclick').includes(tabId)) {
+                    l.classList.add('active');
+                }
+            });
+
+            if (tabId === 'tab-records') {
+                loadRoutingRecords();
+            }
+            if (tabId === 'tab-admin') {
+                loadSettings();
+                loadAdminUsers();
+            }
+        }
+
+        // ── UTILITY ──────────────────────────────────────────────────
+        function showAlert(type, message) {
+            const container = document.getElementById('alert-container');
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.innerHTML = `<span>${type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️'} ${message}</span>`;
+            container.appendChild(alert);
+            
+            setTimeout(() => {
+                alert.style.opacity = '0';
+                alert.style.transform = 'translateY(-10px)';
+                alert.style.transition = 'all 0.3s ease';
+                setTimeout(() => alert.remove(), 300);
+            }, 4000);
+        }
+
+        function setCodeType(type) {
+            codeType = type;
+            const btnBar = document.getElementById('btn-barcode');
+            const btnQr = document.getElementById('btn-qr');
+            if (type === 'barcode') {
+                btnBar.className = 'btn btn-primary';
+                btnQr.className = 'btn btn-secondary';
+            } else {
+                btnBar.className = 'btn btn-secondary';
+                btnQr.className = 'btn btn-primary';
+            }
+        }
+
+        // ── DROPDOWNS ────────────────────────────────────────────────
+        function loadDepartments() {
+            fetch('/api/get_departments')
+            .then(res => res.json())
+            .then(data => {
+                var select = document.getElementById('deptSelect');
+                select.innerHTML = '<option value="">-- Select Department --</option>';
+                data.forEach(d => {
+                    var opt = document.createElement('option');
+                    opt.value = d;
+                    opt.text = d;
+                    select.appendChild(opt);
+                });
+            });
+        }
+
+        function loadSchools() {
+            var dept = document.getElementById('deptSelect').value;
+            if (!dept) return;
+            
+            document.getElementById('schoolInput').value = '';
+            document.getElementById('employeeInput').value = '';
+            var schoolsDatalist = document.getElementById('schoolsListGenerator');
+            schoolsDatalist.innerHTML = '';
+            document.getElementById('employeesListGenerator').innerHTML = '';
+            
+            fetch('/api/get_schools', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({department: dept})
+            })
+            .then(res => res.json())
+            .then(data => {
+                data.forEach(s => {
+                    var opt = document.createElement('option');
+                    opt.value = s;
+                    schoolsDatalist.appendChild(opt);
+                });
+                // Auto-select user's school if it matches
+                if (currentSchool && data.includes(currentSchool)) {
+                    document.getElementById('schoolInput').value = currentSchool;
+                    onSchoolInput();
+                }
+            });
+        }
+
+        function onSchoolInput() {
+            var dept = document.getElementById('deptSelect').value;
+            var school = document.getElementById('schoolInput').value.trim();
+            var statusEl = document.getElementById('schoolStatus');
+            var btn = document.getElementById('addAllBtn');
+            
+            if (!dept || !school) {
+                statusEl.className = 'school-status invalid';
+                statusEl.innerText = 'Type and select a valid school';
+                btn.disabled = true;
+                return;
+            }
+            
+            var options = Array.from(document.getElementById('schoolsListGenerator').options).map(o => o.value);
+            if (options.includes(school)) {
+                loadEmployees();
+                statusEl.className = 'school-status valid';
+                statusEl.innerText = '✅ School "' + school + '" selected';
+                btn.disabled = false;
+            } else {
+                statusEl.className = 'school-status invalid';
+                statusEl.innerText = 'Type and select a valid school from the dropdown';
+                btn.disabled = true;
+            }
+        }
+
+        function loadEmployees() {
+            var dept = document.getElementById('deptSelect').value;
+            var school = document.getElementById('schoolInput').value.trim();
+            if (!dept || !school) return;
+            
+            document.getElementById('employeeInput').value = '';
+            var empDatalist = document.getElementById('employeesListGenerator');
+            empDatalist.innerHTML = '';
+            
+            fetch('/api/get_employees', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({department: dept, school: school})
+            })
+            .then(res => res.json())
+            .then(data => {
+                data.forEach(e => {
+                    var opt = document.createElement('option');
+                    opt.value = e;
+                    empDatalist.appendChild(opt);
+                });
+            });
+        }
+
+        function addAllEmployees() {
+            var dept = document.getElementById('deptSelect').value;
+            var school = document.getElementById('schoolInput').value.trim();
+            
+            if (!dept || !school) {
+                showAlert('error', 'Please select a department and school first.');
+                return;
+            }
+
+            var btn = document.getElementById('addAllBtn');
+            btn.disabled = true;
+            btn.innerText = '⏳ Loading employees...';
+            
+            fetch('/api/get_all_school_employees', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({department: dept, school: school})
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.innerText = '📋 Add All Employees from this School';
+                
+                if (data.status !== 'success') {
+                    showAlert('error', data.message || 'Failed to fetch employees.');
+                    return;
+                }
+                
+                var employees = data.employees || [];
+                if (employees.length === 0) {
+                    showAlert('info', 'No employees found for this school.');
+                    return;
+                }
+                
+                var added = 0;
+                var skipped = 0;
+                
+                employees.forEach(function(empName) {
+                    if (addedEmployees.some(function(e) { return e.name === empName; })) {
+                        skipped++;
+                    } else {
+                        addedEmployees.push({department: dept, school: school, name: empName});
+                        added++;
+                    }
+                });
+                
+                updateListDisplay();
+                
+                var msg = 'Added ' + added + ' employee' + (added !== 1 ? 's' : '') + ' from "' + school + '"';
+                if (skipped > 0) {
+                    msg += ' (' + skipped + ' already in batch)';
+                }
+                showAlert('success', msg);
+            })
+            .catch(function(err) {
+                btn.disabled = false;
+                btn.innerText = '📋 Add All Employees from this School';
+                showAlert('error', 'Network error: ' + err.message);
+            });
+        }
+
+        // ── BATCH BINDING LIST ───────────────────────────────────────
+        function addToList() {
+            var dept = document.getElementById('deptSelect').value;
+            var school = document.getElementById('schoolInput').value.trim();
+            var emp = document.getElementById('employeeInput').value.trim();
+            var newEmp = document.getElementById('newEmpName').value.trim();
+            
+            var name = newEmp || emp;
+            if (!dept || !school || !name) {
+                showAlert('error', 'Please fill in all employee registration fields!');
+                return;
+            }
+            if (addedEmployees.some(e => e.name === name)) {
+                showAlert('info', 'Employee already added to this batch!');
+                return;
+            }
+
+            addedEmployees.push({department: dept, school: school, name: name});
+            document.getElementById('employeeInput').value = '';
+            document.getElementById('newEmpName').value = '';
+            updateListDisplay();
+        }
+
+        function updateListDisplay() {
+            var ul = document.getElementById('employee_list');
+            document.getElementById('listCount').innerText = addedEmployees.length;
+            
+            if (addedEmployees.length === 0) {
+                ul.innerHTML = '<li class="empty-list">Add employees to compile list...</li>';
+                return;
+            }
+            
+            ul.innerHTML = '';
+            addedEmployees.forEach((e, idx) => {
+                var li = document.createElement('li');
+                li.innerHTML = `
+                    <div class="emp-info">
+                        <span class="emp-badge">${e.school}</span>
+                        <strong>${e.name}</strong>
+                    </div>
+                    <span class="remove-btn" onclick="removeFromList(${idx})">✖</span>
+                `;
+                ul.appendChild(li);
+            });
+        }
+
+        function removeFromList(idx) {
+            addedEmployees.splice(idx, 1);
+            updateListDisplay();
+        }
+
+        function clearList() {
+            addedEmployees = [];
+            updateListDisplay();
+        }
+
+        // ── BARCODE/QR GENERATION ───────────────────────────────────
+        function generateCode() {
+            if (addedEmployees.length === 0) {
+                showAlert('error', 'Your employee batch is empty. Add employees first!');
+                return;
+            }
+            
+            var docType = document.getElementById('docType').value.trim();
+            if (!docType) {
+                showAlert('error', 'Please enter a Document Type / description.');
+                return;
+            }
+
+            var names = addedEmployees.map(e => e.name);
+            
+            var payload = {
+                department: addedEmployees[0].department,
+                school: addedEmployees[0].school,
+                doc_type: docType,
+                employees: names,
+                code_type: codeType
+            };
+
+            fetch('/generate_code', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    currentCode = data.code_display;
+                    currentImage = data.image_url;
+                    document.getElementById('codeImage').src = data.image_url;
+                    document.getElementById('codeText').innerText = 'CODE: ' + data.code_display;
+                    document.getElementById('qr_result').classList.add('active');
+                    showAlert('success', 'Document Barcode compiled successfully!');
+                    loadRoutingRecords();
+                } else {
+                    showAlert('error', 'Generation failed: ' + data.message);
+                }
+            });
+        }
+
+        // ── DOWNLOAD OVERLAY ─────────────────────────────────────────
+        function downloadBarcodeOverlay() {
+            if (!currentCode) {
+                showAlert('error', 'Generate a barcode first!');
+                return;
+            }
+
+            var type = codeType;
+            var position = document.getElementById('overlayPosition').value;
+            var pageSize = document.getElementById('overlayPageSize').value;
+            var imgSrc = window.location.origin + '/api/label_image/' + currentCode + '?type=' + type;
+
+            var pageWidth = '8.5in';
+            var pageHeight = pageSize === 'legal' ? '13in' : '11in';
+
+            var printContent = '<!DOCTYPE html><html><head><meta charset="UTF-8">';
+            printContent += '<title>Barcode Overlay - ' + currentCode + '</title>';
+            printContent += '<style>';
+            printContent += '* { margin: 0; padding: 0; box-sizing: border-box; }';
+            printContent += 'body { width: ' + pageWidth + '; height: ' + pageHeight + '; background: white; position: relative; }';
+            printContent += '.barcode-container { position: absolute; text-align: center; }';
+            printContent += '.barcode-container img { max-width: 1.5in; height: auto; display: block; }';
+            printContent += '.code-label { font-family: monospace; font-size: 8pt; margin-top: 2px; }';
+            printContent += '.top-right { top: 0.5in; right: 0.5in; }';
+            printContent += '.top-left { top: 0.5in; left: 0.5in; }';
+            printContent += '.bottom-right { bottom: 0.5in; right: 0.5in; }';
+            printContent += '.bottom-left { bottom: 0.5in; left: 0.5in; }';
+            printContent += '@media print { @page { size: ' + pageSize + '; margin: 0; } body { margin: 0; } }';
+            printContent += '</style></head><body>';
+
+            printContent += '<div class="barcode-container ' + position + '">';
+            printContent += '<img src="' + imgSrc + '" alt="' + currentCode + '" onload="window.print(); setTimeout(function(){window.close()}, 500);">';
+            printContent += '<div class="code-label">CODE: ' + currentCode + '</div>';
+            printContent += '</div>';
+
+            printContent += '</body></html>';
+
+            var printWindow = window.open('', '_blank', 'width=800,height=600');
+            printWindow.document.write(printContent);
+            printWindow.document.close();
+            printWindow.focus();
+        }
+
+        // ── BATCH PRINT PDF ──────────────────────────────────────────
+        function batchPrintPDF() {
+            if (printSheetData.length === 0) {
+                showAlert('error', 'Add barcodes to the print sheet first!');
+                return;
+            }
+
+            var codes = printSheetData.map(function(item) {
+                return { code: item.code, type: 'barcode' };
+            });
+
+            fetch('/api/batch_labels', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ codes: codes })
+            })
+            .then(function(resp) {
+                if (!resp.ok) throw new Error('Batch PDF generation failed');
+                return resp.blob();
+            })
+            .then(function(blob) {
+                var url = window.URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = 'barcode_labels.pdf';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                showAlert('success', 'Batch PDF downloaded with ' + codes.length + ' label(s)!');
+            })
+            .catch(function(err) {
+                showAlert('error', 'Batch download failed: ' + err.message);
+            });
+        }
+
+        // ── PRINT SHEET UTILITIES ────────────────────────────────────
+        function addToPrintSheet() {
+            if (!currentCode) return;
+            
+            var fullUrl = currentImage;
+            if (!fullUrl.startsWith('http')) {
+                fullUrl = window.location.origin + currentImage;
+            }
+            
+            if (printSheetData.some(p => p.code === currentCode)) {
+                showAlert('info', 'This barcode is already on the print layout.');
+                return;
+            }
+
+            printSheetData.push({
+                code: currentCode,
+                image: fullUrl
+            });
+            
+            updateSheetDisplay();
+            
+            document.getElementById('qr_result').classList.remove('active');
+            currentCode = '';
+            currentImage = '';
+            showAlert('success', 'Added to Print Sheet.');
+        }
+
+        function updateSheetDisplay() {
+            var grid = document.getElementById('sheetGrid');
+            document.getElementById('sheetCount').innerText = printSheetData.length;
+            
+            if (printSheetData.length === 0) {
+                grid.innerHTML = '<div class="empty-list" style="grid-column: span 10; text-align: center; width: 100%;">No barcodes added to print sheet yet.</div>';
+                return;
+            }
+            
+            grid.innerHTML = '';
+            printSheetData.forEach((item, index) => {
+                var div = document.createElement('div');
+                div.className = 'sheet-item';
+                div.innerHTML = `
+                    <img src="${item.image}">
+                    <div class="sheet-code">${item.code}</div>
+                    <span class="sheet-remove" onclick="removeFromSheet(${index})">✖</span>
+                `;
+                grid.appendChild(div);
+            });
+        }
+
+        function removeFromSheet(index) {
+            printSheetData.splice(index, 1);
+            updateSheetDisplay();
+        }
+
+        function clearSheet() {
+            printSheetData = [];
+            updateSheetDisplay();
+        }
+
+        function printSheet() {
+            if (printSheetData.length === 0) {
+                showAlert('error', 'Add barcodes to print sheet layout first!');
+                return;
+            }
+
+            var printContent = '<!DOCTYPE html><html><head><meta charset="UTF-8">';
+            printContent += '<title>Print Barcodes</title>';
+            printContent += '<style>';
+            printContent += 'body { margin: 0.5in; font-family: Arial, sans-serif; }';
+            printContent += '.barcode-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }';
+            printContent += '.barcode-item { border: 2px solid black; border-radius: 8px; padding: 15px; text-align: center; page-break-inside: avoid; background: white; }';
+            printContent += '.barcode-item img { max-width: 100%; height: auto; }';
+            printContent += '.barcode-code { font-family: monospace; font-weight: bold; font-size: 14px; margin-top: 8px; letter-spacing: 0.05em; }';
+            printContent += '@media print { @page { margin: 0.3in; } }';
+            printContent += '</style></head><body>';
+            printContent += '<div class="barcode-grid">';
+
+            printSheetData.forEach(function(item) {
+                var imgSrc = item.image;
+                if (!imgSrc.startsWith('http')) {
+                    imgSrc = window.location.origin + imgSrc;
+                }
+                printContent += '<div class="barcode-item">';
+                printContent += '<img src="' + imgSrc + '" alt="' + item.code + '">';
+                printContent += '<div class="barcode-code">CODE: ' + item.code + '</div>';
+                printContent += '</div>';
+            });
+
+            printContent += '</div></body></html>';
+
+            var printWindow = window.open('', '_blank', 'width=800,height=600');
+            printWindow.document.write(printContent);
+            printWindow.document.close();
+            printWindow.focus();
+            printWindow.print();
+            setTimeout(function() { printWindow.close(); }, 1000);
+        }
+
+        // ── ROUTING DATATABLE ────────────────────────────────────────
+        function loadRoutingRecords(page = 1) {
+            currentPage = page;
+            const query = document.getElementById('tableSearch').value.trim();
+            const searchParam = query ? '&search=' + encodeURIComponent(query) : '';
+            fetch('/api/get_routing_records?page=' + page + '&per_page=100' + searchParam)
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    const totalBarcodes = new Set(data.records.map(r => r.code)).size;
+                    document.getElementById('stat-total-barcodes').innerText = totalBarcodes;
+                    document.getElementById('stat-total-employees').innerText = data.pagination.total;
+                    
+                    document.getElementById('pageIndicator').innerText = 'Page ' + currentPage + ' of ' + data.pagination.total_pages;
+                    
+                    renderRoutingTable(data.records);
+                } else {
+                    showAlert('error', 'Failed to retrieve records: ' + data.message);
+                }
+            });
+        }
+
+        function changePage(delta) {
+            if (delta === 1) {
+                currentPage++;
+            } else {
+                currentPage--;
+                if (currentPage < 1) currentPage = 1;
+            }
+            loadRoutingRecords(currentPage);
+        }
+
+        function renderRoutingTable(records) {
+            const tbody = document.getElementById('recordsTableBody');
+            if (records.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="9" class="empty-list" style="text-align:center;">No tracking data logged yet.</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = '';
+            records.forEach(r => {
+                let latestOffice = "";
+                let latestReceiver = "";
+                let latestTs = "";
+                
+                let maxStage = 0;
+                Object.keys(r).forEach(k => {
+                    if (k.startsWith('receiving_office_')) {
+                        let num = parseInt(k.split('_').pop());
+                        if (num > maxStage && r[k]) {
+                            maxStage = num;
+                        }
+                    }
+                });
+
+                if (maxStage > 0) {
+                    latestOffice = r[`receiving_office_${maxStage}`] || "";
+                    latestReceiver = r[`receiver_name_${maxStage}`] || "";
+                    latestTs = r[`timestamp_${maxStage}`] || "";
+                }
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${r.department || ""}</td>
+                    <td>${r.school_office || ""}</td>
+                    <td style="font-weight:700;">${r.employee || ""}</td>
+                    <td><span class="table-code">${r.code || ""}</span></td>
+                    <td><span class="table-office-badge">${latestOffice || "-"}</span></td>
+                    <td>${latestReceiver || "-"}</td>
+                    <td class="table-time">${latestTs || "-"}</td>
+                    <td>
+                        ${currentUserRole === 'Admin' ? `<input type="text" value="${r.remarks || ''}" 
+                               onchange="saveRemarks(${r.id}, this.value)" 
+                               placeholder="Add remark..." 
+                               style="width: 150px; background: rgba(15, 23, 42, 0.4); border: 1px solid var(--glass-border); border-radius: 6px; padding: 4px 8px; color: var(--text-main); font-size: 0.8rem; text-align: center; transition: all 0.3s;"
+                               onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 10px rgba(99, 102, 241, 0.2)';" 
+                               onblur="this.style.borderColor='var(--glass-border)'; this.style.boxShadow='none';">` : `<span style="color:var(--text-muted); font-size:0.8rem;">${r.remarks || '-'}</span>`}
+                    </td>
+                    <td>
+                        <button onclick="reprintBarcode('${r.code}')" 
+                                title="Reprint barcode for ${r.code}"
+                                style="background: linear-gradient(135deg, var(--success), #059669); color: white; border: none; border-radius: 8px; padding: 6px 12px; font-size: 0.75rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25); transition: all 0.2s;"
+                                onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(16, 185, 129, 0.4)';"
+                                onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(16, 185, 129, 0.25)';">
+                            🖨️ Barcode
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // ── REPRINT BARCODE (from records table) ─────────────────────
+        function reprintBarcode(code) {
+            if (!code) {
+                showAlert('error', 'No barcode code found for this record.');
+                return;
+            }
+            
+            // Set as current code and open the print overlay dialog
+            currentCode = code;
+            currentImage = window.location.origin + '/api/label_image/' + code + '?type=barcode';
+            
+            // Open a print dialog with the barcode image (similar to downloadBarcodeOverlay)
+            var position = 'top-right';
+            var pageSize = 'legal';
+            var pageWidth = '8.5in';
+            var pageHeight = pageSize === 'legal' ? '13in' : '11in';
+            var imgSrc = currentImage;
+
+            var printContent = '<!DOCTYPE html><html><head><meta charset="UTF-8">';
+            printContent += '<title>Reprint Barcode - ' + code + '</title>';
+            printContent += '<style>';
+            printContent += '* { margin: 0; padding: 0; box-sizing: border-box; }';
+            printContent += '@page { size: 8.5in 13in; margin: 0.25in; }';
+            printContent += 'body { width: 8.5in; min-height: 13in; background: white; position: relative; margin: 0; padding: 0; }';
+            printContent += '.barcode-container { position: absolute; text-align: center; padding: 10px; background: white; border: 2px dashed #6366f1; border-radius: 8px; }';
+            printContent += '.barcode-container img { width: 1.5in; height: 1.5in; max-width: none; max-height: none; display: block; }';
+            printContent += '.code-label { font-family: monospace; font-size: 11pt; margin-top: 4px; font-weight: bold; color: #0f172a; }';
+            printContent += '.info { font-family: sans-serif; font-size: 9pt; color: #64748b; margin-top: 2px; }';
+            printContent += '.top-right { top: 0.25in; right: 0.25in; }';
+            printContent += '.top-left { top: 0.25in; left: 0.25in; }';
+            printContent += '.bottom-right { bottom: 0.25in; right: 0.25in; }';
+            printContent += '.bottom-left { bottom: 0.25in; left: 0.25in; }';
+            printContent += '.center { top: 50%; left: 50%; transform: translate(-50%, -50%); }';
+            printContent += '@media screen { body { padding: 0.25in; } }';
+            printContent += '@media print { @page { size: 8.5in 13in; margin: 0.25in; } html, body { margin: 0; padding: 0; width: 8.5in; height: 13in; } .no-print { display: none !important; } }';
+            printContent += '</style></head><body>';
+
+            printContent += '<div class="no-print" style="position:fixed; top:10px; left:50%; transform:translateX(-50%); background:#1e293b; color:white; padding:10px 20px; border-radius:8px; font-family:sans-serif; z-index:9999; text-align:center;">';
+            printContent += '<strong>📋 REPRINT MODE</strong><br>Choose position and click Print:<br>';
+            printContent += '<button onclick="setPos(\'top-right\')" style="margin:2px; padding:4px 10px; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer;">Top-Right</button>';
+            printContent += '<button onclick="setPos(\'top-left\')" style="margin:2px; padding:4px 10px; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer;">Top-Left</button>';
+            printContent += '<button onclick="setPos(\'bottom-right\')" style="margin:2px; padding:4px 10px; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer;">Bottom-Right</button>';
+            printContent += '<button onclick="setPos(\'bottom-left\')" style="margin:2px; padding:4px 10px; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer;">Bottom-Left</button>';
+            printContent += '<button onclick="setPos(\'center\')" style="margin:2px; padding:4px 10px; background:#6366f1; color:white; border:none; border-radius:4px; cursor:pointer;">Center</button>';
+            printContent += '<button onclick="window.print()" style="margin:8px 2px 2px; padding:6px 16px; background:#3b82f6; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">🖨️ PRINT</button>';
+            printContent += '<button onclick="window.close()" style="margin:8px 2px 2px; padding:6px 16px; background:#ef4444; color:white; border:none; border-radius:4px; cursor:pointer;">✕ Close</button>';
+            printContent += '</div>';
+
+            printContent += '<div id="barcodeBox" class="barcode-container top-right">';
+            printContent += '<img src="' + imgSrc + '" alt="' + code + '">';
+            printContent += '<div class="code-label">CODE: ' + code + '</div>';
+            printContent += '<div class="info">📅 Reprinted: ' + new Date().toLocaleString() + '</div>';
+            printContent += '</div>';
+
+            printContent += '<script>';
+            printContent += 'function setPos(pos) {';
+            printContent += '  var box = document.getElementById("barcodeBox");';
+            printContent += '  box.className = "barcode-container " + pos;';
+            printContent += '}';
+            printContent += '</' + 'script>';
+
+            printContent += '</body></html>';
+
+            var printWindow = window.open('', '_blank', 'width=900,height=700');
+            printWindow.document.write(printContent);
+            printWindow.document.close();
+            printWindow.focus();
+            
+            showAlert('success', '🖨️ Reprint dialog opened for ' + code);
+        }
+
+        function saveRemarks(recordId, value) {
+            fetch('/api/update_record/' + recordId, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ remarks: value })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showAlert('success', 'Remarks updated!');
+                } else {
+                    showAlert('error', 'Failed to update remarks: ' + data.message);
+                }
+            })
+            .catch(err => {
+                showAlert('error', 'Error updating remarks: ' + err.message);
+            });
+        }
+
+        let searchTimeout = null;
+        function filterTable() {
+            if (searchTimeout) clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                loadRoutingRecords(1);
+            }, 300);
+        }
+
+        function reloadFromExcel() {
+            fetch('/api/reload_excel', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showAlert('success', data.message);
+                    loadRoutingRecords();
+                    loadDepartments();
+                } else {
+                    showAlert('error', data.message);
+                }
+            });
+        }
+
+        // ── ADMIN: USER MANAGEMENT ───────────────────────────────────
+        function loadAdminUsers() {
+            fetch('/api/admin/users')
+            .then(res => res.json())
+            .then(data => {
+                if (data.status !== 'success') {
+                    showAlert('error', 'Failed to load users: ' + data.message);
+                    return;
+                }
+                const tbody = document.getElementById('adminUsersBody');
+                tbody.innerHTML = '';
+                data.users.forEach(user => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${user.username}</td>
+                        <td>${user.role}</td>
+                        <td>${user.school_office || '-'}</td>
+                        <td>${user.status}</td>
+                        <td>
+                            ${user.status === 'Pending' ? `<button class="btn btn-primary" style="margin-right:5px; padding:6px 12px; font-size:0.8rem; width:auto;" onclick="approveUser('${user.username}')">Approve</button>` : ''}
+                            <button class="btn btn-secondary" style="padding:6px 12px; font-size:0.8rem; width:auto;" onclick="rejectUser('${user.username}')">Reject</button>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+                if (data.users.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="empty-list" style="text-align:center;">No users found.</td></tr>';
+                }
+            })
+            .catch(err => showAlert('error', 'Network error loading users: ' + err.message));
+        }
+
+        function approveUser(username) {
+            // Show a dropdown prompt instead of free-text
+            const roles = ['User', 'Supervisor'];
+            const currentIdx = 0;
+            const selectHTML = roles.map((r, i) => `<option value="${r}" ${i === currentIdx ? 'selected' : ''}>${r}</option>`).join('');
+            const dialog = `
+                <div id="approveDialog" style="position:fixed;inset:0;background:rgba(9,11,26,0.95);z-index:20000;display:flex;align-items:center;justify-content:center;">
+                    <div style="background:rgba(30,41,59,0.95);border:1px solid #6366f1;border-radius:20px;padding:40px;max-width:380px;width:90%;text-align:center;">
+                        <div style="font-size:2.5rem;margin-bottom:12px;">✅</div>
+                        <h2 style="margin-bottom:4px;">Approve User</h2>
+                        <p style="color:var(--text-muted);margin-bottom:20px;">Assign role for <strong>${username}</strong></p>
+                        <select id="approveRoleSelect" style="width:100%;padding:14px;font-size:1rem;background:rgba(15,23,42,0.8);border:2px solid #6366f1;border-radius:12px;color:white;margin-bottom:16px;">${selectHTML}</select>
+                        <button onclick="executeApprove('${username}')" style="width:100%;padding:14px;background:linear-gradient(135deg,#6366f1,#a855f7);border:none;border-radius:12px;color:white;font-weight:700;cursor:pointer;margin-bottom:8px;">Approve</button>
+                        <button onclick="document.getElementById('approveDialog').remove()" style="background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:0.85rem;">Cancel</button>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', dialog);
+        }
+        
+        function executeApprove(username) {
+            const selectedRole = document.getElementById('approveRoleSelect').value;
+            fetch('/api/admin/approve_user/' + encodeURIComponent(username), {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({role: selectedRole})
+            })
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('approveDialog').remove();
+                if (data.status === 'success') {
+                    showAlert('success', data.message);
+                    loadAdminUsers();
+                } else {
+                    showAlert('error', data.message || 'Approve failed');
+                }
+            })
+            .catch(err => {
+                document.getElementById('approveDialog')?.remove();
+                showAlert('error', 'Network error: ' + err.message);
+            });
+        }
+
+        function rejectUser(username) {
+            if (username === 'admin') {
+                showAlert('error', 'The Administrator account cannot be deleted.');
+                return;
+            }
+            if (!confirm('Are you sure you want to reject/delete user ' + username + '?')) return;
+            fetch('/api/admin/reject_user/' + encodeURIComponent(username), {
+                method: 'POST'
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showAlert('success', data.message);
+                    loadAdminUsers();
+                } else {
+                    showAlert('error', data.message || 'Reject failed');
+                }
+            })
+            .catch(err => showAlert('error', 'Network error: ' + err.message));
+        }
+
+        // ── ADMIN: SETTINGS ──────────────────────────────────────────
+        function updateCredStatus(configured, sheetId) {
+            const credStatus = document.getElementById('credStatus');
+            const credMissing = document.getElementById('credMissing');
+            const sheetIdDisplay = document.getElementById('sheetIdDisplay');
+            
+            if (configured) {
+                credStatus.style.display = 'inline';
+                credMissing.style.display = 'none';
+                sheetIdDisplay.innerText = sheetId || '(not set)';
+            } else {
+                credStatus.style.display = 'none';
+                credMissing.style.display = 'inline';
+                sheetIdDisplay.innerText = '';
+            }
+        }
+
+        function loadSettings() {
+            fetch('/api/get_settings')
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    document.getElementById('gsheets_enabled').checked = data.gsheets_enabled;
+                    document.getElementById('gsheets_id').value = data.gsheets_id || '';
+                    updateCredStatus(data.gsheets_configured, data.gsheets_id);
+                }
+            });
+        }
+
+        function saveSettings() {
+            const enabled = document.getElementById('gsheets_enabled').checked;
+            const sheetId = document.getElementById('gsheets_id').value.trim();
+
+            fetch('/api/save_settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    gsheets_enabled: enabled,
+                    gsheets_id: sheetId
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showAlert('success', 'Settings saved!');
+                } else {
+                    showAlert('error', 'Saving failed: ' + data.message);
+                }
+            });
+        }
+
+        function saveSettingsWithCreds() {
+            const enabled = document.getElementById('gsheets_enabled').checked;
+            const sheetId = document.getElementById('gsheets_id').value.trim();
+            const creds = document.getElementById('gsheets_credentials').value.trim();
+
+            fetch('/api/save_settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    gsheets_enabled: enabled,
+                    gsheets_id: sheetId,
+                    gsheets_credentials: creds
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showAlert('success', data.message);
+                    document.getElementById('gsheets_credentials').value = '';
+                    loadSettings();
+                } else {
+                    showAlert('error', data.message || 'Save failed');
+                }
+            });
+        }
+
+        function testSheetConnection() {
+            showAlert('info', 'Connecting to Google Sheets using stored credentials...');
+            fetch('/api/gsheet_status')
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showAlert('success', `✅ Connected to Spreadsheet: "${data.title}". Headers ready!`);
+                } else if (data.status === 'disabled') {
+                    showAlert('error', '⚠️ Google Sheets is not configured. Save your Sheet ID and credentials first.');
+                } else {
+                    showAlert('error', 'Connectivity test failed: ' + data.message);
+                }
+            })
+            .catch(function(err) {
+                showAlert('error', 'Network error: ' + err.message);
+            });
+        }
+
+        function bulkSyncSheets() {
+            const btn = document.getElementById('bulkSyncBtn');
+            const status = document.getElementById('bulkSyncStatus');
+            
+            btn.disabled = true;
+            btn.innerText = '⏳ Syncing records to Google Sheets...';
+            status.innerText = '';
+
+            fetch('/api/bulk_sync', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.innerText = '📤 Bulk Sync';
+                
+                if (data.status === 'success') {
+                    status.innerText = `✅ ${data.synced} records synced successfully!`;
+                    showAlert('success', data.message);
+                } else if (data.status === 'partial') {
+                    status.innerText = `⚠️ ${data.synced} synced, ${data.errors.length} errors`;
+                    showAlert('warning', data.message);
+                } else {
+                    status.innerText = '❌ Sync failed';
+                    showAlert('error', data.message);
+                }
+            })
+            .catch(function(err) {
+                btn.disabled = false;
+                btn.innerText = '📤 Bulk Sync';
+                status.innerText = '❌ Network error';
+                showAlert('error', 'Bulk sync failed: ' + err.message);
+            });
+        }
+    
+        // ── LOCAL-CLOUD SYNC ──────────────────────────────────────
+        function exportLocalDB() {
+            var btn = document.getElementById('btnExport');
+            btn.disabled = true;
+            btn.innerText = '⏳ Exporting...';
+            setSyncStatus('Exporting local database...', 'info');
+            fetch('/api/sync/export')
+            .then(function(resp) {
+                if (!resp.ok) throw new Error('Export failed: ' + resp.status);
+                return resp.blob();
+            })
+            .then(function(blob) {
+                var url = window.URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = 'db_backup_' + new Date().toISOString().slice(0,10) + '.json';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                btn.disabled = false;
+                btn.innerText = '📥 Export Local Database';
+                setSyncStatus('✅ Database exported! File downloaded.', 'success');
+            })
+            .catch(function(err) {
+                btn.disabled = false;
+                btn.innerText = '📥 Export Local Database';
+                setSyncStatus('❌ Export failed: ' + err.message, 'error');
+            });
+        }
+
+        function importLocalDB(input) {
+            var file = input.files[0];
+            if (!file) return;
+            setSyncStatus('⏳ Importing ' + file.name + '...', 'info');
+            var formData = new FormData();
+            formData.append('file', file);
+            fetch('/api/sync/import', { method: 'POST', body: formData })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.status === 'success') {
+                    setSyncStatus('✅ ' + data.message, 'success');
+                    loadRoutingRecords();
+                    loadDepartments();
+                } else {
+                    setSyncStatus('❌ Import failed: ' + data.message, 'error');
+                }
+                input.value = '';
+            })
+            .catch(function(err) {
+                setSyncStatus('❌ Import error: ' + err.message, 'error');
+                input.value = '';
+            });
+        }
+
+        function showCloudPushDialog() {
+            document.getElementById('cloudPushDialog').style.display = 'flex';
+        }
+
+        function executePushToCloud() {
+            var cloudUrl = document.getElementById('cloudUrlInput').value.trim();
+            if (!cloudUrl) { setSyncStatus('❌ Cloud URL required!', 'error'); return; }
+            document.getElementById('cloudPushDialog').style.display = 'none';
+            var btn = document.getElementById('btnPushCloud');
+            btn.disabled = true;
+            btn.innerText = '⏳ Pushing...';
+            setSyncStatus('⏳ Pushing to ' + cloudUrl + '...', 'info');
+            fetch('/api/sync/push_to_cloud', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ cloud_url: cloudUrl })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                btn.disabled = false;
+                btn.innerText = '☁️ Push to Cloud';
+                if (data.status === 'success') { setSyncStatus('✅ ' + data.message, 'success'); }
+                else { setSyncStatus('❌ ' + data.message, 'error'); }
+            })
+            .catch(function(err) {
+                btn.disabled = false;
+                btn.innerText = '☁️ Push to Cloud';
+                setSyncStatus('❌ Push failed: ' + err.message, 'error');
+            });
+        }
+
+        function setSyncStatus(msg, type) {
+            var el = document.getElementById('syncStatus');
+            if (!el) return;
+            var c = { success: '#34d399', error: '#f87171', info: '#818cf8' };
+            var ic = { success: '✅', error: '❌', info: 'ℹ️' };
+            el.innerHTML = '<span style="color:' + (c[type]||'#94a3b8') + '; font-size:0.9rem; font-weight:600;">' + (ic[type]||'') + ' ' + msg + '</span>';
+        }
+
+</script>
+</body>
+</html>

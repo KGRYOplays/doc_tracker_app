@@ -7,13 +7,16 @@ import string
 from datetime import datetime
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, session, send_file, redirect, url_for
+from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
 import hashlib
+import json as json_lib
 
 import db_manager
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'barcode-routing-secret-2024-change-in-prod')
+CORS(app)
 
 MASTER_DB  = 'master_db.xlsx'
 QR_FOLDER  = os.path.join('static', 'qr_generated')
@@ -1429,6 +1432,117 @@ def bulk_sync():
 
 
 # ─────────────────────────────────────────────
+
+# ─────────────────────────────────────────────
+#  LOCAL <-> CLOUD SYNC ENDPOINTS
+# ─────────────────────────────────────────────
+
+@app.route('/api/sync/export', methods=['GET'])
+@require_admin
+def sync_export():
+    try:
+        conn = db_manager.get_db_connection()
+        data = {}
+        for table in ['routing_records', 'code_lookup', 'users', 'settings']:
+            rows = conn.execute(f'SELECT * FROM {table}').fetchall()
+            data[table] = [dict(r) for r in rows]
+        conn.close()
+
+        import time
+        timestamp = time.strftime('%Y%m%d_%H%M%S')
+        backup_file = f'static/sync_backup_{timestamp}.json'
+        with open(backup_file, 'w', encoding='utf-8') as f:
+            json_lib.dump(data, f, ensure_ascii=False, indent=2)
+
+        return send_file(backup_file, mimetype="application/json", as_attachment=True,
+                         download_name=f'db_backup_{timestamp}.json')
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/sync/import', methods=['POST'])
+@require_admin
+def sync_import():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'status': 'error', 'message': 'No file uploaded.'}), 400
+
+        file = request.files['file']
+        if not file.filename.endswith('.json'):
+            return jsonify({'status': 'error', 'message': 'Only .json files accepted.'}), 400
+
+        data = json_lib.loads(file.read().decode('utf-8'))
+        conn = db_manager.get_db_connection()
+        cursor = conn.cursor()
+        report = {}
+
+        for table in ['routing_records', 'code_lookup', 'settings']:
+            cursor.execute(f'DELETE FROM {table}')
+            count = 0
+            for row in data.get(table, []):
+                cols = list(row.keys())
+                ph = ['?'] * len(cols)
+                cursor.execute(f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(ph)})", [row[c] for c in cols])
+                count += 1
+            report[table] = count
+
+        admin_row = cursor.execute('SELECT password_hash FROM users WHERE username = ?', ('admin',)).fetchone()
+        cursor.execute('DELETE FROM users')
+        count = 0
+        for row in data.get("users", []):
+            cols = list(row.keys())
+            ph = ['?'] * len(cols)
+            cursor.execute(f"INSERT INTO users ({', '.join(cols)}) VALUES ({', '.join(ph)})", [row[c] for c in cols])
+            count += 1
+        if admin_row and not cursor.execute("SELECT username FROM users WHERE username = ?", ("admin",)).fetchone():
+            cursor.execute('INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change) VALUES (?,?,?,?,?,?,?)',
+                           ('admin', admin_row[0], 'Admin', 'Approved', '', 'admin@deped.gov.ph', 0))
+            count += 1
+        report["users"] = count
+
+        conn.commit()
+        conn.close()
+        return jsonify({"status": "success", "message": f"Imported: {report['routing_records']} records, {report['code_lookup']} codes, {report['users']} users", "report": report})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/sync/push_to_cloud', methods=['POST'])
+@require_admin
+def sync_push_to_cloud():
+    try:
+        import requests as http_requests, tempfile, time, os
+
+        data = request.json
+        cloud_url = data.get('cloud_url', '').strip().rstrip('/')
+        if not cloud_url:
+            return jsonify({'status': 'error', 'message': 'Cloud URL is required.'}), 400
+
+        conn = db_manager.get_db_connection()
+        db_data = {}
+        for table in ['routing_records', 'code_lookup', 'users', 'settings']:
+            rows = conn.execute(f'SELECT * FROM {table}').fetchall()
+            db_data[table] = [dict(r) for r in rows]
+        conn.close()
+
+        timestamp = time.strftime('%Y%m%d_%H%M%S')
+        tmp_path = os.path.join(tempfile.gettempdir(), f'db_push_{timestamp}.json')
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json_lib.dump(db_data, f, ensure_ascii=False, indent=2)
+
+        with open(tmp_path, 'rb') as f:
+            resp = http_requests.post(f'{cloud_url}/api/sync/import',
+                                      files={'file': (f'db_{timestamp}.json', f, 'application/json')}, timeout=120)
+        os.remove(tmp_path)
+
+        if resp.status_code == 200:
+            return jsonify({'status': 'success', 'message': f"Cloud synced! {resp.json().get('message', '')}" })
+        else:
+            return jsonify({'status': 'error', 'message': f"Cloud returned {resp.status_code}: {resp.text[:300]}" })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 #  STARTUP
 # ─────────────────────────────────────────────
 if __name__ == '__main__':
