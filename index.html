@@ -996,6 +996,7 @@
 
             <button class="tab-link active" id="tab-btn-generator" onclick="switchTab('tab-generator')">🏷️ Generator</button>
             <button class="tab-link" id="tab-btn-records" onclick="switchTab('tab-records')">📋 Records</button>
+            <button class="tab-link hidden-tab" id="tab-btn-codes" onclick="switchTab('tab-codes')">📦 All Codes</button>
             <button class="tab-link hidden-tab" id="tab-btn-admin" onclick="switchTab('tab-admin')">🔒 Admin Panel</button>
             <a href="/scanner" class="nav-btn-scanner" id="tab-btn-scanner">📷 Scanner →</a>
         </div>
@@ -1163,7 +1164,48 @@
             </div>
         </div>
 
-        <!-- ════ TAB 3: ADMIN PANEL ════ -->
+        <!-- ════ TAB 3: ALL GENERATED CODES ════ -->
+        <div id="tab-codes" class="tab-panel">
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">📦</div>
+                    <h2>All Generated Barcodes & QR Codes</h2>
+                </div>
+                <p style="color:var(--text-muted); margin-bottom:20px; font-size:0.9rem;">
+                    Centralized view of all barcodes/codes ever generated across all offices and schools. 
+                    Admin can view, search, and reprint any code from here.
+                </p>
+                <div class="table-actions">
+                    <div class="search-wrapper">
+                        <input type="text" id="codesSearch" onkeyup="filterCodesTable()" placeholder="Search code, department, school, doc type...">
+                    </div>
+                    <button class="btn btn-secondary" onclick="changeCodesPage(-1)" style="width:auto; height: 50px;">◀ Previous</button>
+                    <span id="codesPageIndicator" style="display:flex; align-items:center; padding:0 15px; font-weight:bold;">Page 1</span>
+                    <button class="btn btn-secondary" onclick="changeCodesPage(1)" style="width:auto; height: 50px;">Next ▶</button>
+                    <button class="btn btn-secondary" onclick="loadAllCodes()" style="width:auto; height: 50px;">🔄 Refresh</button>
+                </div>
+                <div style="width:100%; max-width:100%; overflow-x:auto; max-height:75vh; border-radius:var(--radius-md); border:1px solid var(--glass-border); background:rgba(15,23,42,0.4);">
+                    <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.75rem;">
+                        <thead>
+                            <tr>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">Code</th>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">Department</th>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">School/Office</th>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">Employees</th>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">Document Type</th>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">Generated At</th>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="codesTableBody">
+                            <tr><td colspan="7" class="empty-list" style="text-align:center;">Loading generated codes...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════ TAB 4: ADMIN PANEL ════ -->
         <div id="tab-admin" class="tab-panel">
             <!-- ADMIN: Dashboard Overview -->
             <div class="glass-card">
@@ -1362,24 +1404,28 @@
             // Guest: sees ONLY records (read-only view)
             
             const adminBtn = document.getElementById('tab-btn-admin');
+            const codesBtn = document.getElementById('tab-btn-codes');
             const genBtn = document.getElementById('tab-btn-generator');
             const recBtn = document.getElementById('tab-btn-records');
             const scannerLink = document.getElementById('tab-btn-scanner');
             
             if (role === 'Admin') {
                 adminBtn.classList.remove('hidden-tab');
+                codesBtn.classList.remove('hidden-tab');
                 genBtn.classList.remove('hidden-tab');
                 recBtn.classList.remove('hidden-tab');
                 scannerLink.classList.remove('hidden-tab');
                 switchTab('tab-generator');
             } else if (role === 'Guest') {
                 adminBtn.classList.add('hidden-tab');
+                codesBtn.classList.add('hidden-tab');
                 genBtn.classList.add('hidden-tab');
                 recBtn.classList.remove('hidden-tab');
                 scannerLink.classList.add('hidden-tab');
                 switchTab('tab-records');
             } else {
                 adminBtn.classList.add('hidden-tab');
+                codesBtn.classList.add('hidden-tab');
                 genBtn.classList.remove('hidden-tab');
                 recBtn.classList.remove('hidden-tab');
                 scannerLink.classList.remove('hidden-tab');
@@ -1550,6 +1596,9 @@
 
             if (tabId === 'tab-records') {
                 loadRoutingRecords();
+            }
+            if (tabId === 'tab-codes') {
+                loadAllCodes(1);
             }
             if (tabId === 'tab-admin') {
                 loadSettings();
@@ -2548,6 +2597,76 @@
             el.innerHTML = '<span style="color:' + (c[type]||'#94a3b8') + '; font-size:0.9rem; font-weight:600;">' + (ic[type]||'') + ' ' + msg + '</span>';
         }
 
+        // ── ALL GENERATED CODES DATATABLE ───────────────────────────────
+        var codesPage = 1;
+        function loadAllCodes(page) {
+            if (page === undefined) page = codesPage;
+            codesPage = page;
+            var query = document.getElementById('codesSearch').value.trim();
+            var searchParam = query ? '&search=' + encodeURIComponent(query) : '';
+            fetch('/api/admin/all_codes?page=' + page + '&per_page=50' + searchParam)
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (data.status === 'success') {
+                    document.getElementById('codesPageIndicator').innerText = 'Page ' + page + ' of ' + data.pagination.total_pages;
+                    renderCodesTable(data.codes);
+                } else {
+                    showAlert('error', 'Failed to load codes: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(function(err) {
+                showAlert('error', 'Network error loading codes: ' + err.message);
+            });
+        }
+
+        function changeCodesPage(delta) {
+            var newPage = codesPage + delta;
+            if (newPage < 1) newPage = 1;
+            loadAllCodes(newPage);
+        }
+
+        function renderCodesTable(codes) {
+            var tbody = document.getElementById('codesTableBody');
+            if (!codes || codes.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="empty-list" style="text-align:center;">No barcodes/codes generated yet.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = '';
+            codes.forEach(function(c) {
+                var empList = c.employees_list || [];
+                var empDisplay = empList.length > 3 ? empList.slice(0, 3).join(', ') + ' +' + (empList.length - 3) + ' more' : empList.join(', ');
+                var tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><span class="table-code">${c.code || ''}</span></td>
+                    <td>${c.department || ''}</td>
+                    <td>${c.school_office || ''}</td>
+                    <td style="font-size:0.7rem; max-width:200px; overflow:hidden; text-overflow:ellipsis;">${empDisplay}</td>
+                    <td>${c.doc_type || ''}</td>
+                    <td class="table-time">${c.generated_at || ''}</td>
+                    <td>
+                        <button onclick="reprintBarcodeFromCodes('${c.code}')" 
+                                style="background: linear-gradient(135deg, var(--success), #059669); color: white; border: none; border-radius: 8px; padding: 6px 12px; font-size: 0.75rem; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);">
+                            🖨️ Reprint
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function reprintBarcodeFromCodes(code) {
+            // Reuse the existing reprintBarcode function
+            reprintBarcode(code);
+        }
+
+        let codesSearchTimeout = null;
+        function filterCodesTable() {
+            if (codesSearchTimeout) clearTimeout(codesSearchTimeout);
+            codesSearchTimeout = setTimeout(function() {
+                codesPage = 1;
+                loadAllCodes(1);
+            }, 300);
+        }
 </script>
 </body>
 </html>

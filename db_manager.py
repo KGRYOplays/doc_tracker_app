@@ -163,6 +163,18 @@ def init_db():
     except:
         pass
     
+    # 5. Master Data Table (replaces master_db.xlsx dependency)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS master_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            department TEXT NOT NULL,
+            school_office TEXT NOT NULL,
+            employee_name TEXT NOT NULL
+        )
+    ''')
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_master_dept ON master_data(department)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_master_school ON master_data(school_office)")
+    
     conn.commit()
     
     # Seed default admin user if users table is empty
@@ -173,6 +185,34 @@ def init_db():
         cursor.execute("INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change) VALUES (?, ?, ?, ?, ?, ?, ?)",
                        ('admin', admin_hash, 'Admin', 'Approved', '', 'admin@deped.gov.ph', 0))
         conn.commit()
+    
+    # Seed default sync token if not present
+    cursor.execute("SELECT value FROM settings WHERE key = 'sync_token'")
+    if not cursor.fetchone():
+        import secrets
+        default_token = secrets.token_urlsafe(32)
+        cursor.execute("INSERT INTO settings (key, value) VALUES (?, ?)", ('sync_token', default_token))
+        conn.commit()
+    
+    # Seed master_data from Excel file if master_data table is empty and Excel exists
+    cursor.execute("SELECT COUNT(*) FROM master_data")
+    if cursor.fetchone()[0] == 0 and os.path.exists(MASTER_DB):
+        try:
+            df = pd.read_excel(MASTER_DB)
+            if all(col in df.columns for col in ['Department', 'School/Office', 'Employee_Name']):
+                for _, row in df.iterrows():
+                    dept = str(row.get('Department', '')).strip()
+                    school = str(row.get('School/Office', '')).strip()
+                    emp = str(row.get('Employee_Name', '')).strip()
+                    if dept and school and emp:
+                        cursor.execute(
+                            "INSERT INTO master_data (department, school_office, employee_name) VALUES (?, ?, ?)",
+                            (dept, school, emp)
+                        )
+                conn.commit()
+                print(f"Seeded {cursor.rowcount} master_data entries from {MASTER_DB}")
+        except Exception as e:
+            print(f"Note: Could not seed from master_db.xlsx: {e}")
     
     # 4. Migrate: add receiver_name columns to existing databases
     _migrate_add_receiver_names(conn)
@@ -268,6 +308,94 @@ def save_setting(key, value):
     conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
     conn.commit()
     conn.close()
+
+
+# ---- MASTER DATA HELPERS (replaces master_db.xlsx dependency) ----
+
+def get_all_departments():
+    """Return sorted list of unique departments from master_data."""
+    conn = get_db_connection()
+    rows = conn.execute("SELECT DISTINCT department FROM master_data ORDER BY department").fetchall()
+    conn.close()
+    return [r['department'] for r in rows]
+
+
+def get_schools_for_department(department):
+    """Return sorted list of unique schools for a given department."""
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT DISTINCT school_office FROM master_data WHERE department = ? ORDER BY school_office",
+        (department,)
+    ).fetchall()
+    conn.close()
+    return [r['school_office'] for r in rows]
+
+
+def get_employees_for_school(department, school):
+    """Return sorted list of employee names for a given department + school."""
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT DISTINCT employee_name FROM master_data WHERE department = ? AND school_office = ? ORDER BY employee_name",
+        (department, school)
+    ).fetchall()
+    conn.close()
+    return [r['employee_name'] for r in rows]
+
+
+def get_all_schools():
+    """Return sorted list of all unique schools/offices across all departments."""
+    conn = get_db_connection()
+    rows = conn.execute("SELECT DISTINCT school_office FROM master_data ORDER BY school_office").fetchall()
+    conn.close()
+    return [r['school_office'] for r in rows]
+
+
+def get_employees_by_school(school):
+    """Return all employees belonging to a specific school (across all departments)."""
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT DISTINCT employee_name FROM master_data WHERE school_office = ? ORDER BY employee_name",
+        (school,)
+    ).fetchall()
+    conn.close()
+    return [r['employee_name'] for r in rows]
+
+
+def add_master_entries(department, school, employees):
+    """Add multiple employees under a department+school. employees is a list of names."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    count = 0
+    for emp in employees:
+        if emp.strip():
+            cursor.execute(
+                "INSERT OR IGNORE INTO master_data (department, school_office, employee_name) VALUES (?, ?, ?)",
+                (department.strip(), school.strip(), emp.strip())
+            )
+            if cursor.rowcount > 0:
+                count += 1
+    conn.commit()
+    conn.close()
+    return count
+
+
+def delete_master_entry(entry_id):
+    """Delete a single master_data entry by id."""
+    conn = get_db_connection()
+    conn.execute("DELETE FROM master_data WHERE id = ?", (entry_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_all_master_data():
+    """Return all master_data entries for admin management."""
+    conn = get_db_connection()
+    rows = conn.execute("SELECT * FROM master_data ORDER BY department, school_office, employee_name").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# --- END MASTER DATA HELPERS ---
 
 
 # --- REAL-TIME EXCEL EXPORT ---

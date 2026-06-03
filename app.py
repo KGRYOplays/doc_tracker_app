@@ -21,9 +21,6 @@ CORS(app)
 MASTER_DB  = 'master_db.xlsx'
 QR_FOLDER  = os.path.join('static', 'qr_generated')
 
-# Global cache for master database (loaded once on startup)
-MASTER_DB_CACHE = None
-
 if not os.path.exists('static'):
     os.makedirs('static')
 if not os.path.exists(QR_FOLDER):
@@ -72,26 +69,9 @@ def generate_6_digit_code():
     return ''.join(random.choices(chars, k=6))
 
 
-def load_master_db():
-    global MASTER_DB_CACHE
-    if MASTER_DB_CACHE is not None:
-        return MASTER_DB_CACHE
-    try:
-        MASTER_DB_CACHE = pd.read_excel(MASTER_DB)
-        if not all(col in MASTER_DB_CACHE.columns for col in ['Department', 'School/Office', 'Employee_Name']):
-            raise FileNotFoundError("Wrong columns in master_db.xlsx")
-        return MASTER_DB_CACHE
-    except Exception as e:
-        print(f"Error loading master database: {e}")
-        data = {
-            'Department': ['Division Office', 'Elementary Schools', 'Secondary Schools', 'Senior High Schools'],
-            'School/Office': ['Main Office', 'Riverside Elementary', 'Westside High', 'North Academy'],
-            'Employee_Name': ['John Doe', 'Jane Smith', 'Mike Ross', 'Sarah Lee']
-        }
-        df = pd.DataFrame(data)
-        df.to_excel(MASTER_DB, index=False)
-        MASTER_DB_CACHE = df
-        return df
+# Master data is now stored in the SQLite `master_data` table.
+# See db_manager.py for helper functions: get_all_departments(),
+# get_schools_for_department(), get_employees_for_school(), etc.
 
 
 def save_code_lookup(code, department, school, employees, doc_type):
@@ -876,39 +856,42 @@ def admin_reset_passkey():
 
 
 # ─────────────────────────────────────────────
-#  MASTER DATA APIs
+#  MASTER DATA APIs (from SQLite master_data table)
 # ─────────────────────────────────────────────
 @app.route('/api/get_departments')
 def get_departments():
-    df = load_master_db()
-    return jsonify(sorted(df['Department'].dropna().unique().tolist()))
+    try:
+        depts = db_manager.get_all_departments()
+        return jsonify(depts)
+    except Exception as e:
+        return jsonify([])
 
 
 @app.route('/api/get_schools', methods=['POST'])
 def get_schools():
-    df   = load_master_db()
-    dept = request.json.get('department')
-    filtered = df[df['Department'] == dept]
-    return jsonify(sorted(filtered['School/Office'].dropna().unique().tolist()))
+    try:
+        dept = request.json.get('department', '')
+        schools = db_manager.get_schools_for_department(dept)
+        return jsonify(schools)
+    except Exception as e:
+        return jsonify([])
 
 
 @app.route('/api/get_employees', methods=['POST'])
 def get_employees():
-    data = request.json
-    df   = load_master_db()
-    filtered = df[
-        (df['Department'] == data.get('department')) &
-        (df['School/Office'] == data.get('school'))
-    ]
-    return jsonify(sorted(filtered['Employee_Name'].dropna().unique().tolist()))
+    try:
+        data = request.json
+        employees = db_manager.get_employees_for_school(data.get('department', ''), data.get('school', ''))
+        return jsonify(employees)
+    except Exception as e:
+        return jsonify([])
 
 
 @app.route('/api/get_all_schools', methods=['GET'])
 def get_all_schools():
     """All unique schools/offices for the scanner receiving-office picker."""
     try:
-        df      = load_master_db()
-        schools = sorted(df['School/Office'].dropna().unique().tolist())
+        schools = db_manager.get_all_schools()
         return jsonify({'status': 'success', 'schools': schools})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
@@ -919,19 +902,115 @@ def get_all_school_employees():
     """Return ALL employees belonging to a specific school (for Add-All feature)."""
     try:
         data   = request.json
-        dept   = data.get('department', '').strip()
         school = data.get('school', '').strip()
-        df     = load_master_db()
-
-        if dept and school:
-            filtered = df[(df['Department'] == dept) & (df['School/Office'] == school)]
-        elif school:
-            filtered = df[df['School/Office'] == school]
-        else:
+        if not school:
             return jsonify({'status': 'error', 'message': 'School/Office is required.'})
-
-        employees = sorted(filtered['Employee_Name'].dropna().unique().tolist())
+        employees = db_manager.get_employees_by_school(school)
         return jsonify({'status': 'success', 'employees': employees, 'count': len(employees)})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+# ─────────────────────────────────────────────
+#  ADMIN: MASTER DATA MANAGEMENT (from SQLite)
+# ─────────────────────────────────────────────
+@app.route('/api/admin/master_data', methods=['GET'])
+@require_admin
+def admin_get_master_data():
+    """Return all master_data entries for admin editing."""
+    try:
+        data = db_manager.get_all_master_data()
+        return jsonify({'status': 'success', 'data': data})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/api/admin/master_data/add', methods=['POST'])
+@require_admin
+def admin_add_master_data():
+    """Add employee(s) to master_data. Body: { "department": "...", "school": "...", "employees": ["Name1", "Name2"] }"""
+    try:
+        data = request.json
+        dept = data.get('department', '').strip()
+        school = data.get('school', '').strip()
+        employees = data.get('employees', [])
+        if not dept or not school or not employees:
+            return jsonify({'status': 'error', 'message': 'Department, school, and employees list are required.'}), 400
+        count = db_manager.add_master_entries(dept, school, employees)
+        return jsonify({'status': 'success', 'message': f'Added {count} employee(s) to master data.'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/api/admin/master_data/delete/<int:entry_id>', methods=['DELETE'])
+@require_admin
+def admin_delete_master_data(entry_id):
+    """Delete a single master_data entry."""
+    try:
+        db_manager.delete_master_entry(entry_id)
+        return jsonify({'status': 'success', 'message': 'Entry deleted.'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+# ─────────────────────────────────────────────
+#  ADMIN: ALL GENERATED CODES
+# ─────────────────────────────────────────────
+@app.route('/api/admin/all_codes', methods=['GET'])
+@require_admin
+def admin_all_codes():
+    """Return all entries from code_lookup, paginated."""
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 50))
+        search = request.args.get('search', '').strip()
+        sort_by = request.args.get('sort_by', 'generated_at')
+        order = request.args.get('order', 'DESC').upper()
+
+        allowed_sort = {'code', 'department', 'school_office', 'doc_type', 'generated_at'}
+        if sort_by not in allowed_sort:
+            sort_by = 'generated_at'
+        if order not in ('ASC', 'DESC'):
+            order = 'DESC'
+
+        conn = db_manager.get_db_connection()
+        where_sql = ""
+        params = []
+        if search:
+            where_sql = "WHERE (code LIKE ? OR department LIKE ? OR school_office LIKE ? OR doc_type LIKE ? OR employees LIKE ?)"
+            pat = f"%{search}%"
+            params = [pat, pat, pat, pat, pat]
+
+        total = conn.execute(f"SELECT COUNT(*) FROM code_lookup {where_sql}", params).fetchone()[0]
+        offset = (page - 1) * per_page
+        rows = conn.execute(
+            f"SELECT * FROM code_lookup {where_sql} ORDER BY {sort_by} {order} LIMIT ? OFFSET ?",
+            params + [per_page, offset]
+        ).fetchall()
+        conn.close()
+
+        codes = []
+        for r in rows:
+            d = dict(r)
+            # Parse employees back to list for the frontend
+            emp_str = d.get('employees', '')
+            if '|||' in emp_str:
+                d['employees_list'] = emp_str.split('|||')
+            else:
+                d['employees_list'] = emp_str.split(',')
+            codes.append(d)
+
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        return jsonify({
+            'status': 'success',
+            'codes': codes,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': total,
+                'total_pages': total_pages
+            }
+        })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -1461,9 +1540,21 @@ def sync_export():
 
 
 @app.route('/api/sync/import', methods=['POST'])
-@require_admin
 def sync_import():
     try:
+        # Allow admin session OR valid sync token
+        token = request.headers.get('X-Sync-Token', '')
+        valid_token = db_manager.get_setting('sync_token', '')
+        is_admin = session.get('user_role') == 'Admin'
+        
+        if not is_admin and token != valid_token:
+            # If no token is set yet but one was provided, auto-set it (first push)
+            if not valid_token and token:
+                db_manager.save_setting('sync_token', token)
+                valid_token = token
+            else:
+                return jsonify({'status': 'error', 'message': 'Unauthorized. Provide valid admin session or sync token.'}), 403
+        
         if 'file' not in request.files:
             return jsonify({'status': 'error', 'message': 'No file uploaded.'}), 400
 
@@ -1530,9 +1621,14 @@ def sync_push_to_cloud():
         with open(tmp_path, 'w', encoding='utf-8') as f:
             json_lib.dump(db_data, f, ensure_ascii=False, indent=2)
 
+        sync_token = db_manager.get_setting('sync_token', '')
+        headers = {}
+        if sync_token:
+            headers['X-Sync-Token'] = sync_token
         with open(tmp_path, 'rb') as f:
             resp = http_requests.post(f'{cloud_url}/api/sync/import',
-                                      files={'file': (f'db_{timestamp}.json', f, 'application/json')}, timeout=120)
+                                      files={'file': (f'db_{timestamp}.json', f, 'application/json')},
+                                      headers=headers, timeout=120)
         os.remove(tmp_path)
 
         if resp.status_code == 200:
