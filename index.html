@@ -1378,7 +1378,7 @@
         var currentSchool = '';
 
         // ── AUTH GATE ────────────────────────────────────────────────
-        window.onload = function() {
+        function initAuthCheck() {
             // Check if user is already logged in
             fetch('/api/check_auth')
             .then(r => r.json())
@@ -1404,8 +1404,16 @@
                 }
                 // Otherwise login gate stays visible
             })
-            .catch(() => {});
-        };
+            .catch(function() {});
+        }
+
+        // Use both DOMContentLoaded and window.onload as fallback
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            initAuthCheck();
+        } else {
+            document.addEventListener('DOMContentLoaded', initAuthCheck);
+            window.addEventListener('load', initAuthCheck);
+        }
 
         function setupRoleBasedTabs(role) {
             // Admin: sees generator + records + admin panel + scanner
@@ -2171,7 +2179,7 @@
         // ── ROUTING DATATABLE ────────────────────────────────────────
         function loadRoutingRecords(page = 1) {
             currentPage = page;
-            const query = document.getElementById('tableSearch').value.trim();
+            const query = document.getElementById('tableSearch') ? document.getElementById('tableSearch').value.trim() : '';
             const searchParam = query ? '&search=' + encodeURIComponent(query) : '';
             fetch('/api/get_routing_records?page=' + page + '&per_page=100' + searchParam)
             .then(res => res.json())
@@ -2194,6 +2202,9 @@
                 } else {
                     showAlert('error', 'Failed to retrieve records: ' + data.message);
                 }
+            })
+            .catch(function(err) {
+                console.error('Error loading routing records:', err);
             });
         }
 
