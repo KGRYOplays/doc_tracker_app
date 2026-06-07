@@ -1520,7 +1520,7 @@ def dashboard_stats():
     try:
         conn = db_manager.get_db_connection()
         # Total unique barcodes (codes ever generated)
-        unique_barcodes = conn.execute("SELECT COUNT(*) FROM code_lookup").fetchone()[0]
+        unique_barcodes = conn.execute("SELECT COUNT(DISTINCT code) FROM routing_records").fetchone()[0]
         # Total employees under tracking (total routing records = employees assigned to all scanned codes)
         total_employees = conn.execute("SELECT COUNT(*) FROM routing_records").fetchone()[0]
         # Total unique codes currently being tracked (have at least 1 scan)
