@@ -575,6 +575,7 @@ def login():
         return jsonify({
             'status': 'success',
             'message': f'Logged in successfully as {user["role"]}!',
+            'requires_password_change': bool(user['requires_password_change']),
             'user': {
                 'username': user['username'],
                 'role': user['role'],
@@ -1511,6 +1512,197 @@ def bulk_sync():
 
 
 # ─────────────────────────────────────────────
+#  DASHBOARD STATS
+# ─────────────────────────────────────────────
+@app.route('/api/dashboard_stats', methods=['GET'])
+def dashboard_stats():
+    """Return dashboard statistics: unique barcodes and total employees under tracking."""
+    try:
+        conn = db_manager.get_db_connection()
+        # Total unique barcodes (codes ever generated)
+        unique_barcodes = conn.execute("SELECT COUNT(*) FROM code_lookup").fetchone()[0]
+        # Total employees under tracking (total routing records = employees assigned to all scanned codes)
+        total_employees = conn.execute("SELECT COUNT(*) FROM routing_records").fetchone()[0]
+        # Total unique codes currently being tracked (have at least 1 scan)
+        active_codes = conn.execute("SELECT COUNT(DISTINCT code) FROM routing_records").fetchone()[0]
+        conn.close()
+        return jsonify({
+            'status': 'success',
+            'unique_barcodes': unique_barcodes,
+            'total_employees': total_employees,
+            'active_codes': active_codes
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# ── Forgot Password ──
+@app.route('/api/forgot_password', methods=['POST'])
+def forgot_password():
+    """
+    Forgot password: if user exists with an email, generate a temporary password,
+    save its hash with requires_password_change=1, and attempt to email it.
+    Since passwords are stored as SHA256 hashes, we cannot retrieve the original.
+    Instead we generate a new temporary password.
+    """
+    try:
+        data = request.json
+        username = data.get('username', '').strip().lower()
+        
+        if not username:
+            return jsonify({'status': 'error', 'message': 'Username is required.'}), 400
+        
+        conn = db_manager.get_db_connection()
+        user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        
+        if not user:
+            conn.close()
+            return jsonify({'status': 'error', 'message': 'Username not found.'}), 404
+        
+        email = user.get('email', '') or ''
+        if not email:
+            conn.close()
+            return jsonify({'status': 'error', 'message': 'No email address on file for this account. Contact your administrator.'}), 400
+        
+        # Generate a random temporary password
+        import secrets
+        temp_password = secrets.token_urlsafe(8)  # e.g. "abc123_xY"
+        temp_hash = hashlib.sha256(temp_password.encode()).hexdigest()
+        
+        conn.execute("UPDATE users SET password_hash = ?, requires_password_change = 1 WHERE username = ?",
+                     (temp_hash, username))
+        conn.commit()
+        conn.close()
+        
+        # Try to send email using SMTP settings
+        smtp_enabled = db_manager.get_setting('smtp_enabled', 'False')
+        smtp_server = db_manager.get_setting('smtp_server', '')
+        smtp_port = db_manager.get_setting('smtp_port', '587')
+        smtp_user = db_manager.get_setting('smtp_user', '')
+        smtp_pass = db_manager.get_decrypted_setting('smtp_password', '')
+        smtp_from = db_manager.get_setting('smtp_from', '')
+        
+        email_sent = False
+        if smtp_enabled == 'True' and smtp_server and smtp_user and smtp_pass:
+            try:
+                import smtplib
+                from email.message import EmailMessage
+                
+                msg = EmailMessage()
+                msg.set_content(f"""Dear {username},
+
+A password reset was requested for your Document Tracking System account.
+
+Your temporary password is: {temp_password}
+
+Please log in and change your password immediately.
+
+This is an automated message. If you did not request this, please contact your administrator.
+
+Regards,
+Document Tracking System
+""")
+                msg['Subject'] = 'Document Tracking System - Password Reset'
+                msg['From'] = smtp_from or smtp_user
+                msg['To'] = email
+                
+                server = smtplib.SMTP(smtp_server, int(smtp_port))
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+                server.quit()
+                email_sent = True
+            except Exception as smtp_err:
+                print(f"SMTP error sending email: {smtp_err}")
+                email_sent = False
+        
+        if email_sent:
+            return jsonify({
+                'status': 'success', 
+                'message': f'A temporary password has been sent to {email}. Please check your inbox and spam folder.'
+            })
+        else:
+            # Email not sent but password was reset - show temp password directly (fallback)
+            return jsonify({
+                'status': 'warning',
+                'message': f'Could not send email. Your temporary password is: {temp_password}. Please change it after logging in.',
+                'temp_password': temp_password  # only shown in fallback mode
+            })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# ── SMTP Settings (Admin) ──
+@app.route('/api/smtp_settings', methods=['GET'])
+@require_admin
+def get_smtp_settings():
+    """Get SMTP configuration (password is hidden)."""
+    try:
+        return jsonify({
+            'status': 'success',
+            'smtp_enabled': db_manager.get_setting('smtp_enabled', 'False') == 'True',
+            'smtp_server': db_manager.get_setting('smtp_server', ''),
+            'smtp_port': db_manager.get_setting('smtp_port', '587'),
+            'smtp_user': db_manager.get_setting('smtp_user', ''),
+            'smtp_from': db_manager.get_setting('smtp_from', ''),
+            'smtp_has_password': bool(db_manager.get_setting('smtp_password', ''))
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/smtp_settings', methods=['POST'])
+@require_admin
+def save_smtp_settings():
+    """Save SMTP configuration."""
+    try:
+        data = request.json
+        db_manager.save_setting('smtp_enabled', 'True' if data.get('smtp_enabled') else 'False')
+        db_manager.save_setting('smtp_server', data.get('smtp_server', '').strip())
+        db_manager.save_setting('smtp_port', str(data.get('smtp_port', '587')).strip())
+        db_manager.save_setting('smtp_user', data.get('smtp_user', '').strip())
+        db_manager.save_setting('smtp_from', data.get('smtp_from', '').strip())
+        
+        smtp_pass = data.get('smtp_password', '').strip()
+        if smtp_pass:
+            db_manager.save_encrypted_setting('smtp_password', smtp_pass)
+        
+        return jsonify({'status': 'success', 'message': 'SMTP settings saved!'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# ── Test SMTP ──
+@app.route('/api/test_smtp', methods=['POST'])
+@require_admin
+def test_smtp():
+    """Test SMTP connection by sending a test email to the current admin."""
+    try:
+        data = request.json
+        test_email = data.get('test_email', '').strip()
+        server = data.get('smtp_server', '').strip()
+        port = str(data.get('smtp_port', '587')).strip()
+        user = data.get('smtp_user', '').strip()
+        password = data.get('smtp_password', '').strip()
+        from_addr = data.get('smtp_from', '').strip()
+        
+        if not test_email:
+            return jsonify({'status': 'error', 'message': 'Test email address is required.'}), 400
+        
+        import smtplib
+        from email.message import EmailMessage
+        
+        msg = EmailMessage()
+        msg.set_content('This is a test email from your Document Tracking System.\n\nSMTP configuration is working correctly!')
+        msg['Subject'] = 'Document Tracking System - SMTP Test'
+        msg['From'] = from_addr or user
+        msg['To'] = test_email
+        
+        server_obj = smtplib.SMTP(server, int(port))
+        server_obj.starttls()
+        server_obj.login(user, password)
+        server_obj.send_message(msg)
+        server_obj.quit()
+        
+        return jsonify({'status': 'success', 'message': f'Test email sent to {test_email}!'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': f'SMTP test failed: {str(e)}'})
 
 # ─────────────────────────────────────────────
 #  LOCAL <-> CLOUD SYNC ENDPOINTS

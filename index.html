@@ -958,6 +958,17 @@
                 <button class="btn-auth" onclick="submitLogin()">🔓 Sign In</button>
                 <button class="btn-auth" onclick="guestLogin()" style="background:linear-gradient(135deg,#10b981,#059669);margin-bottom:4px;">👁️ Sign in as Guest (Read-Only Records)</button>
                 <button class="auth-switch" onclick="showRegister()">Don't have an account? Register here</button>
+                <button class="auth-switch" onclick="showForgotPassword()" style="margin-top:4px;">🔑 Forgot Passkey?</button>
+            </div>
+            <div id="forgotView" class="hidden">
+                <div class="auth-icon">🔑</div>
+                <h2>Forgot Passkey</h2>
+                <p class="auth-sub">Enter your username to reset your passkey</p>
+                <div class="auth-error" id="forgotError"></div>
+                <input type="text" id="forgotUsername" placeholder="Username"
+                       onkeypress="if(event.key==='Enter') submitForgotPassword()">
+                <button class="btn-auth" onclick="submitForgotPassword()" style="background:linear-gradient(135deg,#f59e0b,#d97706);">🔑 Reset Passkey</button>
+                <button class="auth-switch" onclick="showLogin(); document.getElementById('forgotError').textContent='';">← Back to Sign In</button>
             </div>
             <div id="registerView" class="hidden">
                 <div class="auth-icon">📝</div>
@@ -1384,7 +1395,6 @@
                     // Show/hide tabs based on role
                     setupRoleBasedTabs(data.role);
                     
-                    // Check if admin for admin tab visibility
                     loadDepartments();
                     loadRoutingRecords();
                     if (data.role === 'Admin') {
@@ -1477,10 +1487,94 @@
             });
         }
 
+        function showForgotPassword() {
+            document.getElementById('loginView').classList.add('hidden');
+            document.getElementById('registerView').classList.add('hidden');
+            document.getElementById('forgotView').classList.remove('hidden');
+            document.getElementById('forgotError').textContent = '';
+            document.getElementById('forgotUsername').value = '';
+        }
+
         function showLogin() {
             document.getElementById('registerView').classList.add('hidden');
+            document.getElementById('forgotView').classList.add('hidden');
             document.getElementById('loginView').classList.remove('hidden');
             document.getElementById('loginError').textContent = '';
+            document.getElementById('forgotError').textContent = '';
+        }
+
+        function submitForgotPassword() {
+            const username = document.getElementById('forgotUsername').value.trim();
+            const errEl = document.getElementById('forgotError');
+            if (!username) { errEl.textContent = 'Please enter your username.'; return; }
+            errEl.textContent = '';
+            
+            fetch('/api/forgot_password', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert(data.message);
+                    showLogin();
+                } else if (data.status === 'warning') {
+                    alert(data.message);
+                    showLogin();
+                } else {
+                    errEl.textContent = data.message || 'Password reset failed.';
+                }
+            })
+            .catch(() => { errEl.textContent = 'Network error.'; });
+        }
+
+        function showChangePasswordDialog(forceChange) {
+            // Create modal for changing password
+            const dialog = document.createElement('div');
+            dialog.id = 'changePasswordDialog';
+            dialog.style.cssText = 'position:fixed;inset:0;background:rgba(9,11,26,0.95);z-index:20000;display:flex;align-items:center;justify-content:center;';
+            dialog.innerHTML = `
+                <div style="background:rgba(30,41,59,0.95);border:1px solid #6366f1;border-radius:20px;padding:40px;max-width:420px;width:90%;text-align:center;">
+                    <div style="font-size:2.5rem;margin-bottom:12px;">🔑</div>
+                    <h2 style="margin-bottom:4px;">${forceChange ? 'Change Required' : 'Change Passkey'}</h2>
+                    <p style="color:var(--text-muted);margin-bottom:20px;font-size:0.9rem;">
+                        ${forceChange ? 'Your passkey is the default or has been reset. Please set a new passkey.' : 'Update your account passkey.'}
+                    </p>
+                    <div id="changePwError" style="color:var(--error);font-weight:600;min-height:22px;margin-bottom:8px;font-size:0.9rem;"></div>
+                    <input type="password" id="changePwCurrent" placeholder="Current Passkey" style="width:100%;padding:14px;font-size:1rem;background:rgba(15,23,42,0.8);border:2px solid #6366f1;border-radius:12px;color:white;margin-bottom:12px;">
+                    <input type="password" id="changePwNew" placeholder="New Passkey (min 6 characters)" style="width:100%;padding:14px;font-size:1rem;background:rgba(15,23,42,0.8);border:2px solid #6366f1;border-radius:12px;color:white;margin-bottom:16px;">
+                    <button onclick="executeChangePassword(${forceChange})" style="width:100%;padding:14px;background:linear-gradient(135deg,#6366f1,#a855f7);border:none;border-radius:12px;color:white;font-weight:700;cursor:pointer;margin-bottom:8px;">${forceChange ? '✅ Update Passkey' : '🔑 Change Passkey'}</button>
+                    ${!forceChange ? '<button onclick="document.getElementById(\'changePasswordDialog\').remove()" style="background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:0.85rem;">Cancel</button>' : ''}
+                </div>
+            `;
+            document.body.appendChild(dialog);
+        }
+
+        function executeChangePassword(forceChange) {
+            const current = document.getElementById('changePwCurrent').value.trim();
+            const newPw = document.getElementById('changePwNew').value.trim();
+            const errEl = document.getElementById('changePwError');
+            
+            if (!current || !newPw) { errEl.textContent = 'Please fill in both fields.'; return; }
+            if (newPw.length < 6) { errEl.textContent = 'New passkey must be at least 6 characters.'; return; }
+            errEl.textContent = '';
+            
+            fetch('/api/change_password', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({current_password: current, new_password: newPw})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('Passkey changed successfully!');
+                    document.getElementById('changePasswordDialog').remove();
+                } else {
+                    errEl.textContent = data.message || 'Failed to change passkey.';
+                }
+            })
+            .catch(() => { errEl.textContent = 'Network error.'; });
         }
 
         function submitLogin() {
@@ -1513,6 +1607,11 @@
                     if (data.user.role === 'Admin') {
                         loadSettings();
                         loadAdminUsers();
+                    }
+                    
+                    // Force password change if required
+                    if (data.requires_password_change) {
+                        showChangePasswordDialog(true);
                     }
                 } else {
                     errEl.textContent = data.message || 'Login failed.';
@@ -2078,9 +2177,16 @@
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'success') {
-                    const totalBarcodes = new Set(data.records.map(r => r.code)).size;
-                    document.getElementById('stat-total-barcodes').innerText = totalBarcodes;
-                    document.getElementById('stat-total-employees').innerText = data.pagination.total;
+                    // Use proper dashboard stats API
+                    fetch('/api/dashboard_stats')
+                    .then(r => r.json())
+                    .then(stats => {
+                        if (stats.status === 'success') {
+                            document.getElementById('stat-total-barcodes').innerText = stats.unique_barcodes;
+                            document.getElementById('stat-total-employees').innerText = stats.total_employees;
+                        }
+                    })
+                    .catch(() => {});
                     
                     document.getElementById('pageIndicator').innerText = 'Page ' + currentPage + ' of ' + data.pagination.total_pages;
                     

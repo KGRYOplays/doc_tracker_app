@@ -111,13 +111,16 @@ def init_db():
         )
     ''')
     
-    # 2. Routing Records Table — 3 columns per stage: office, receiver_name, timestamp
+    # 2. Routing Records Table — matches GSheet column order exactly
+    # Dept, School/Office, Employee, Code, Doc Type, Remarks,
+    # Receiving Office 1, Receiver Name 1, Timestamp 1, ... (x10)
     columns = [
         "id INTEGER PRIMARY KEY AUTOINCREMENT",
         "department TEXT NOT NULL",
         "school_office TEXT NOT NULL",
         "employee TEXT NOT NULL",
         "code TEXT NOT NULL",
+        "doc_type TEXT DEFAULT ''",
         "remarks TEXT",
     ]
     for i in range(1, 11):
@@ -430,8 +433,10 @@ def trigger_excel_export():
             if not stages:
                 stages = list(range(1, 11))
             
-            sql = ("SELECT department AS Department, school_office AS [School/Office], "
-                   "employee AS Employee, code AS Code")
+            sql = (f"SELECT department AS Department, school_office AS [School/Office], "
+                   f"employee AS Employee, code AS Code, "
+                   f"COALESCE(doc_type, '') AS [Doc Type], "
+                   f"remarks AS Remarks")
             for i in stages:
                 sql += f", receiving_office_{i} AS [Receiving Office {i}]"
                 # Only add receiver_name if column exists
@@ -569,8 +574,8 @@ def test_google_sheets_connection(sheet_id, service_account_json):
         except gspread.exceptions.WorksheetNotFound:
             ws = sh.add_worksheet(title="Routing Records", rows=1000, cols=50)
         
-        # Headers include receiver_name and remarks
-        headers = ["Department", "School/Office", "Employee", "Code", "Remarks"]
+        # Headers include doc_type, receiver_name and remarks
+        headers = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks"]
         for i in range(1, 11):
             headers += [f"Receiving Office {i}", f"Receiver Name {i}", f"Timestamp {i}"]
         
@@ -603,7 +608,7 @@ def _col_to_letter(col):
 
 
 def push_row_to_gsheets(sheet_id, service_account_json, row_dict):
-    """Safely updates or appends a row in Google Sheets. Handles receiver_name columns."""
+    """Safely updates or appends a row in Google Sheets. Handles doc_type and receiver_name columns."""
     import gspread
     from google.oauth2.service_account import Credentials
     import json
@@ -616,30 +621,23 @@ def push_row_to_gsheets(sheet_id, service_account_json, row_dict):
     sh = client.open_by_key(sheet_id)
     ws = sh.worksheet("Routing Records")
     
-    # Determine max stage from row_dict
-    stages = []
-    for k in row_dict.keys():
-        if k.startswith("receiving_office_"):
-            try:
-                stages.append(int(k.split("_")[-1]))
-            except:
-                pass
-    max_stage = max(stages) if stages else 10
-    if max_stage < 10:
-        max_stage = 10
-    
-    target_headers = ["Department", "School/Office", "Employee", "Code", "Remarks"]
-    for i in range(1, max_stage + 1):
+    # Always use fixed 10 stages for consistent column alignment
+    target_headers = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks"]
+    for i in range(1, 11):
         target_headers += [f"Receiving Office {i}", f"Receiver Name {i}", f"Timestamp {i}"]
+    
+    # Get doc_type from row_dict (may come from JOIN with code_lookup)
+    doc_type = row_dict.get('doc_type', '') or row_dict.get('doc_type_val', '') or ''
     
     row_data = [
         row_dict.get('department', ''),
         row_dict.get('school_office', ''),
         row_dict.get('employee', ''),
         row_dict.get('code', ''),
+        doc_type,
         row_dict.get('remarks', '')
     ]
-    for i in range(1, max_stage + 1):
+    for i in range(1, 11):
         row_data.append(row_dict.get(f'receiving_office_{i}') or "")
         row_data.append(row_dict.get(f'receiver_name_{i}') or "")
         row_data.append(row_dict.get(f'timestamp_{i}') or "")
@@ -874,9 +872,10 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
                 cursor.execute("SELECT id FROM routing_records WHERE code = ? AND employee = ?", (code, emp))
                 exist = cursor.fetchone()
                 
+                doc_type = str(row.get('Doc Type', '')).strip()
                 remarks = str(row.get('Remarks', '')).strip()
-                vals = [dept, school, emp, code, remarks]
-                col_names = ['department', 'school_office', 'employee', 'code', 'remarks']
+                vals = [dept, school, emp, code, doc_type, remarks]
+                col_names = ['department', 'school_office', 'employee', 'code', 'doc_type', 'remarks']
                 
                 for k, v in row.items():
                     if 'Receiving Office' in k:

@@ -1,0 +1,34 @@
+# Google Service Account Credentials
+google_credentials/
+document-tracking-app-*.json
+
+# Environment variables
+.env
+.env.local
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated files - DON'T commit generated QR codes
+static/qr_generated/
+
+# Allow master_db.xlsx and app.db to be committed so Render has data
+# Remove these if you want to exclude them
+# *.db
+# *.xlsx
