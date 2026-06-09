@@ -1040,16 +1040,10 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Select Employee</label>
+                        <label>Select or Type Employee Name</label>
                         <input type="text" id="employeeInput" list="employeesListGenerator" placeholder="Type or select employee...">
                         <datalist id="employeesListGenerator"></datalist>
-                    </div>
-
-                    <div class="or-divider">— OR REGISTER NEW —</div>
-
-                    <div class="form-group">
-                        <label>Custom Employee Name</label>
-                        <input type="text" id="newEmpName" placeholder="Enter name...">
+                        <div id="employeeSuggestInfo" style="font-size:0.85rem; color:var(--text-muted); margin-top:4px; min-height:1.2em;"></div>
                     </div>
 
                     <button class="btn btn-add" onclick="addToList()">➕ Add Employee to List</button>
@@ -1158,6 +1152,7 @@
                                 <th>School/Office</th>
                                 <th>Employee</th>
                                 <th>Barcode Code</th>
+                                <th>Doc Type</th>
                                 <th>Receiving Office</th>
                                 <th>Receiver</th>
                                 <th>Timestamp</th>
@@ -1167,7 +1162,7 @@
                         </thead>
                         <tbody id="recordsTableBody">
                             <tr>
-                                <td colspan="9" class="empty-list" style="text-align:center;">Loading routing data...</td>
+                                <td colspan="10" class="empty-list" style="text-align:center;">Loading routing data...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1755,6 +1750,10 @@
                     opt.text = d;
                     select.appendChild(opt);
                 });
+                // If User role, auto-lock dept + school after departments load
+                if (currentUserRole === 'User' && currentSchool) {
+                    setupUserLocks(currentUserRole);
+                }
             });
         }
 
@@ -1822,19 +1821,40 @@
             document.getElementById('employeeInput').value = '';
             var empDatalist = document.getElementById('employeesListGenerator');
             empDatalist.innerHTML = '';
+            var infoEl = document.getElementById('employeeSuggestInfo');
+            infoEl.innerHTML = '';
             
-            fetch('/api/get_employees', {
+            fetch('/api/get_employees_suggest', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({department: dept, school: school})
             })
             .then(res => res.json())
             .then(data => {
-                data.forEach(e => {
+                if (data.status !== 'success') return;
+                var sameCount = 0;
+                var otherCount = 0;
+                // 1. Same-school employees (top priority)
+                (data.same_school || []).forEach(function(e) {
                     var opt = document.createElement('option');
                     opt.value = e;
                     empDatalist.appendChild(opt);
+                    sameCount++;
                 });
+                // 2. Cross-school employees (shown with school label)
+                (data.other_schools || []).forEach(function(item) {
+                    var opt = document.createElement('option');
+                    opt.value = item.name;
+                    opt.label = item.name + ' [Other: ' + item.school + ']';
+                    empDatalist.appendChild(opt);
+                    otherCount++;
+                });
+                // Update info text
+                var html = '<span style="color:var(--success);">✅ ' + sameCount + ' employee' + (sameCount !== 1 ? 's' : '') + ' from "' + school + '"</span>';
+                if (otherCount > 0) {
+                    html += ' &nbsp;·&nbsp; <span style="color:var(--text-muted);">💡 Plus ' + otherCount + ' from other schools</span>';
+                }
+                infoEl.innerHTML = html;
             });
         }
 
@@ -1899,26 +1919,80 @@
             });
         }
 
+        // ── USER ROLE: LOCK DEPT + SCHOOL TO ASSIGNED VALUES ─────────
+        function setupUserLocks(role) {
+            if (role !== 'User' || !currentSchool) return;
+            // User role: lock dept + school to their assigned school
+            // First find which department contains this school
+            fetch('/api/get_departments')
+            .then(r => r.json())
+            .then(depts => {
+                var foundDept = '';
+                var promises = depts.map(function(d) {
+                    return fetch('/api/get_schools', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({department: d})
+                    }).then(r => r.json()).then(schools => {
+                        if (schools.includes(currentSchool)) foundDept = d;
+                    });
+                });
+                Promise.all(promises).then(function() {
+                    if (!foundDept) return;
+                    // Set department
+                    var deptSel = document.getElementById('deptSelect');
+                    deptSel.value = foundDept;
+                    // Load schools and set school
+                    var schoolsDl = document.getElementById('schoolsListGenerator');
+                    schoolsDl.innerHTML = '';
+                    fetch('/api/get_schools', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({department: foundDept})
+                    }).then(r => r.json()).then(function(schools) {
+                        schools.forEach(function(s) {
+                            var opt = document.createElement('option');
+                            opt.value = s;
+                            schoolsDl.appendChild(opt);
+                        });
+                        document.getElementById('schoolInput').value = currentSchool;
+                        onSchoolInput();
+                        // Lock the department and school fields
+                        deptSel.disabled = true;
+                        deptSel.style.opacity = '0.6';
+                        document.getElementById('schoolInput').disabled = true;
+                        document.getElementById('schoolInput').style.opacity = '0.6';
+                        // Show lock badge
+                        var lockDiv = document.createElement('div');
+                        lockDiv.id = 'userLockBadge';
+                        lockDiv.style.cssText = 'margin-bottom:15px; padding:10px 16px; background:rgba(99,102,241,0.1); border:1px solid rgba(99,102,241,0.25); border-radius:10px; font-size:0.9rem; color:#a5b4fc; display:flex; align-items:center; gap:8px;';
+                        lockDiv.innerHTML = '🔒 Locked to: <strong>' + foundDept + '</strong> — <strong>' + currentSchool + '</strong>';
+                        var card = document.querySelector('#tab-generator .glass-card .card-title-row');
+                        if (card && !document.getElementById('userLockBadge')) {
+                            card.parentNode.insertBefore(lockDiv, card.nextSibling);
+                        }
+                    });
+                });
+            });
+        }
+
         // ── BATCH BINDING LIST ───────────────────────────────────────
         function addToList() {
             var dept = document.getElementById('deptSelect').value;
             var school = document.getElementById('schoolInput').value.trim();
             var emp = document.getElementById('employeeInput').value.trim();
-            var newEmp = document.getElementById('newEmpName').value.trim();
             
-            var name = newEmp || emp;
-            if (!dept || !school || !name) {
-                showAlert('error', 'Please fill in all employee registration fields!');
+            if (!dept || !school || !emp) {
+                showAlert('error', 'Please select or type an employee name!');
                 return;
             }
-            if (addedEmployees.some(e => e.name === name)) {
+            if (addedEmployees.some(e => e.name === emp)) {
                 showAlert('info', 'Employee already added to this batch!');
                 return;
             }
 
-            addedEmployees.push({department: dept, school: school, name: name});
+            addedEmployees.push({department: dept, school: school, name: emp});
             document.getElementById('employeeInput').value = '';
-            document.getElementById('newEmpName').value = '';
             updateListDisplay();
         }
 
@@ -2221,7 +2295,7 @@
         function renderRoutingTable(records) {
             const tbody = document.getElementById('recordsTableBody');
             if (records.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="9" class="empty-list" style="text-align:center;">No tracking data logged yet.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="10" class="empty-list" style="text-align:center;">No tracking data logged yet.</td></tr>';
                 return;
             }
             
@@ -2253,6 +2327,7 @@
                     <td>${r.school_office || ""}</td>
                     <td style="font-weight:700;">${r.employee || ""}</td>
                     <td><span class="table-code">${r.code || ""}</span></td>
+                    <td>${r.doc_type || "-"}</td>
                     <td><span class="table-office-badge">${latestOffice || "-"}</span></td>
                     <td>${latestReceiver || "-"}</td>
                     <td class="table-time">${latestTs || "-"}</td>

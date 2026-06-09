@@ -69,13 +69,38 @@ def generate_6_digit_code():
     return ''.join(random.choices(chars, k=6))
 
 
+def _get_gsheets_config():
+    """Return (is_enabled, sheet_id, creds) tuple. Creds are decrypted."""
+    enabled = db_manager.get_setting('gsheets_enabled') == 'True'
+    sheet_id = db_manager.get_setting('gsheets_id')
+    creds = db_manager.get_decrypted_setting('gsheets_credentials')
+    return enabled and bool(sheet_id) and bool(creds), sheet_id, creds
+
+
 # Master data is now stored in the SQLite `master_data` table.
 # See db_manager.py for helper functions: get_all_departments(),
 # get_schools_for_department(), get_employees_for_school(), etc.
 
 
 def save_code_lookup(code, department, school, employees, doc_type):
-    gen_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    gen_time = datetime.now().strftime("%m/%d/%Y")
+    
+    # Sanitize employee names: if any are still in "LastName, FirstName" format, reorder them
+    employees = [db_manager.reorder_name(e) for e in employees]
+    
+    # Write to Google Sheets FIRST (synchronous, authoritative source)
+    ok, sheet_id, creds = _get_gsheets_config()
+    if ok:
+        code_dict = {
+            'code': code, 'department': department, 'school_office': school,
+            'employees': '|||'.join(employees), 'doc_type': doc_type, 'generated_at': gen_time
+        }
+        # Synchronous push — fails fast if GSheets is unreachable
+        db_manager._gsheets_push_with_retry(
+            db_manager.push_code_to_gsheets, sheet_id, creds, code_dict
+        )
+    
+    # Then update local SQLite cache for fast reads
     conn = db_manager.get_db_connection()
     conn.execute(
         "INSERT OR REPLACE INTO code_lookup (code, department, school_office, employees, doc_type, generated_at) "
@@ -84,15 +109,6 @@ def save_code_lookup(code, department, school, employees, doc_type):
     )
     conn.commit()
     conn.close()
-    
-    # Push to GSheets
-    enabled = db_manager.get_setting('gsheets_enabled') == 'True'
-    sheet_id = db_manager.get_setting('gsheets_id')
-    creds = db_manager.get_decrypted_setting('gsheets_credentials')
-    if enabled and sheet_id and creds:
-        import threading
-        code_dict = {'code': code, 'department': department, 'school_office': school, 'employees': '|||'.join(employees), 'doc_type': doc_type, 'generated_at': gen_time}
-        threading.Thread(target=db_manager.push_code_to_gsheets, args=(sheet_id, creds, code_dict), daemon=True).start()
         
     db_manager.trigger_excel_export()
 
@@ -111,6 +127,9 @@ def get_code_lookup(code):
     else:
         # Old format - split by comma (will be migrated)
         employees_list = employees_str.split(',')
+    
+    # Tolerant: reorder any names still in "LastName, FirstName" format to "FirstName LastName"
+    employees_list = [db_manager.reorder_name(e) for e in employees_list]
     
     return {
         'department': row['department'],
@@ -411,9 +430,12 @@ def create_document_page_pdf(code, doc_type='barcode'):
                 office_cols = [c for c in row.keys() if c.startswith('receiving_office_')]
                 stages = sorted({int(c.split('_')[-1]) for c in office_cols if c.split('_')[-1].isdigit()})
                 for i in stages:
-                    office = row.get(f'receiving_office_{i}', '') or ''
-                    receiver = row.get(f'receiver_name_{i}', '') or ''
-                    ts = row.get(f'timestamp_{i}', '') or ''
+                    off_key = f'receiving_office_{i}'
+                    rec_key = f'receiver_name_{i}'
+                    ts_key  = f'timestamp_{i}'
+                    office = row[off_key] if off_key in row.keys() else ''
+                    receiver = row[rec_key] if rec_key in row.keys() else ''
+                    ts = row[ts_key] if ts_key in row.keys() else ''
                     if office:
                         if office not in all_routes:
                             all_routes[office] = {'receiver': receiver, 'timestamp': ts, 'stage': i}
@@ -626,14 +648,13 @@ def register():
         conn.commit()
         conn.close()
         
-        # Sync users to sheets if enabled
-        enabled = db_manager.get_setting('gsheets_enabled') == 'True'
-        sheet_id = db_manager.get_setting('gsheets_id')
-        creds = db_manager.get_decrypted_setting('gsheets_credentials')
-        if enabled and sheet_id and creds:
-            user_dict = {'username': username, 'password_hash': pw_hash, 'role': role_request, 'status': 'Pending', 'school_office': school_office, 'email': email}
-            import threading
-            threading.Thread(target=db_manager.push_user_to_gsheets, args=(sheet_id, creds, user_dict), daemon=True).start()
+        # Write to Google Sheets FIRST (synchronous, authoritative source)
+        ok, sheet_id, creds = _get_gsheets_config()
+        if ok:
+            user_dict = {'username': username, 'password_hash': pw_hash, 'role': role_request, 'status': 'Pending', 'school_office': school_office, 'email': email, 'requires_password_change': 1}
+            db_manager._gsheets_push_with_retry(
+                db_manager.push_user_to_gsheets, sheet_id, creds, user_dict
+            )
             
         return jsonify({'status': 'success', 'message': 'Registration request submitted! Please wait for Admin approval.'})
     except Exception as e:
@@ -742,12 +763,12 @@ def admin_approve_user(username):
         updated_user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
         conn.close()
         
-        enabled = db_manager.get_setting('gsheets_enabled') == 'True'
-        sheet_id = db_manager.get_setting('gsheets_id')
-        creds = db_manager.get_decrypted_setting('gsheets_credentials')
-        if enabled and sheet_id and creds:
-            import threading
-            threading.Thread(target=db_manager.push_user_to_gsheets, args=(sheet_id, creds, dict(updated_user)), daemon=True).start()
+        # Write to Google Sheets FIRST (synchronous, authoritative source)
+        ok, sheet_id, creds = _get_gsheets_config()
+        if ok:
+            db_manager._gsheets_push_with_retry(
+                db_manager.push_user_to_gsheets, sheet_id, creds, dict(updated_user)
+            )
             
         return jsonify({'status': 'success', 'message': f'Account "{username}" approved as {assigned_role}!'})
     except Exception as e:
@@ -768,15 +789,13 @@ def admin_reject_user(username):
         conn.commit()
         conn.close()
         
-        # Note: In sheets we delete by updating status to 'Rejected' or simply updating sheet (will re-sync on bulk)
-        # We can push to sheets with 'Rejected' status to notify cloud
-        enabled = db_manager.get_setting('gsheets_enabled') == 'True'
-        sheet_id = db_manager.get_setting('gsheets_id')
-        creds = db_manager.get_decrypted_setting('gsheets_credentials')
-        if enabled and sheet_id and creds:
-            import threading
-            user_dict = {'username': username, 'password_hash': 'DELETED', 'role': 'None', 'status': 'Rejected', 'school_office': ''}
-            threading.Thread(target=db_manager.push_user_to_gsheets, args=(sheet_id, creds, user_dict), daemon=True).start()
+        # Push rejection status to Google Sheets synchronously
+        ok, sheet_id, creds = _get_gsheets_config()
+        if ok:
+            user_dict = {'username': username, 'password_hash': 'DELETED', 'role': 'None', 'status': 'Rejected', 'school_office': '', 'email': ''}
+            db_manager._gsheets_push_with_retry(
+                db_manager.push_user_to_gsheets, sheet_id, creds, user_dict
+            )
             
         return jsonify({'status': 'success', 'message': f'Account request "{username}" rejected.'})
     except Exception as e:
@@ -844,12 +863,12 @@ def admin_reset_passkey():
         updated_user = conn.execute("SELECT * FROM users WHERE username = ?", (target_username,)).fetchone()
         conn.close()
         
-        enabled = db_manager.get_setting('gsheets_enabled') == 'True'
-        sheet_id = db_manager.get_setting('gsheets_id')
-        creds = db_manager.get_decrypted_setting('gsheets_credentials')
-        if enabled and sheet_id and creds:
-            import threading
-            threading.Thread(target=db_manager.push_user_to_gsheets, args=(sheet_id, creds, dict(updated_user)), daemon=True).start()
+        # Write to Google Sheets synchronously (authoritative source)
+        ok, sheet_id, creds = _get_gsheets_config()
+        if ok:
+            db_manager._gsheets_push_with_retry(
+                db_manager.push_user_to_gsheets, sheet_id, creds, dict(updated_user)
+            )
             
         return jsonify({'status': 'success', 'message': f'Passkey for "{target_username}" reset successfully!'})
     except Exception as e:
@@ -894,6 +913,20 @@ def get_all_schools():
     try:
         schools = db_manager.get_all_schools()
         return jsonify({'status': 'success', 'schools': schools})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/api/get_employees_suggest', methods=['POST'])
+def get_employees_suggest():
+    """Return employees split into same-school first, then cross-school suggestions.
+    Used by the unified employee picker in the Generate tab."""
+    try:
+        data = request.json
+        department = data.get('department', '')
+        school = data.get('school', '')
+        result = db_manager.get_employees_with_suggestions(department, school)
+        return jsonify({'status': 'success', **result})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -1020,6 +1053,7 @@ def admin_all_codes():
 #  CODE GENERATION
 # ─────────────────────────────────────────────
 @app.route('/generate_code', methods=['POST'])
+@require_login
 def generate_code():
     try:
         data       = request.json
@@ -1029,6 +1063,26 @@ def generate_code():
         school     = data.get('school')
         employees  = data.get('employees')
         doc_type   = data.get('doc_type')
+
+        # ── USER ROLE: force-override dept + school to session's assigned values ──
+        user_role     = session.get('user_role', '')
+        user_school   = session.get('school_office', '')
+        if user_role == 'User' and user_school:
+            # Resolve the department for this school from master_data
+            conn = db_manager.get_db_connection()
+            row = conn.execute(
+                "SELECT department FROM master_data WHERE school_office = ? LIMIT 1",
+                (user_school,)
+            ).fetchone()
+            conn.close()
+            if row:
+                department = row['department']
+            school = user_school
+
+        # ── CUSTOM NAMES ARE MONITORING-ONLY: ensure they are NOT inserted into master_data ──
+        # save_code_lookup() stores names in code_lookup.employees; it does NOT touch master_data.
+        # The only place that adds to master_data is the admin API (/api/admin/master_data/add)
+        # or the initial Excel seed. So no extra guard needed here — names are monitoring-only by design.
 
         save_code_lookup(code, department, school, employees, doc_type)
 
@@ -1168,13 +1222,19 @@ def barcode_overlay():
 #  SCAN LOGGING
 # ─────────────────────────────────────────────
 @app.route('/log_scan', methods=['POST'])
-@require_role('Admin', 'Supervisor')
+@require_login
 def log_scan():
     try:
         data             = request.json
         code             = data.get('scanned_data', '').strip().upper()
         receiving_office = data.get('receiving_office', '').strip()
         receiver_name    = data.get('receiver_name', '').strip()
+
+        # ── USER ROLE: force-override receiving_office to session's assigned school ──
+        user_role     = session.get('user_role', '')
+        user_school   = session.get('school_office', '')
+        if user_role == 'User' and user_school:
+            receiving_office = user_school
 
         if not receiving_office:
             return jsonify({'status': 'error', 'message': 'Please select a Receiving Office!'})
@@ -1206,7 +1266,8 @@ def log_scan():
                     key = f'receiving_office_{i}'
                     if key in row.keys() and row[key]:
                         latest_office = row[key]
-                        latest_receiver = row.get(f'receiver_name_{i}', '')
+                        receiver_key = f'receiver_name_{i}'
+                        latest_receiver = row[receiver_key] if receiver_key in row.keys() else ''
                         latest_ts     = row[f'timestamp_{i}']
                         break
 
@@ -1219,7 +1280,7 @@ def log_scan():
                     })
 
         # ── 2. LOG THE ROUTING STAMP ──────────────────────────────────────────
-        current_ts       = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        current_ts       = datetime.now().strftime("%m/%d/%Y")
         updated_rows_ids = []
         slot_updated     = 1
 
@@ -1275,6 +1336,8 @@ def log_scan():
 
         conn.close()
 
+        # Queue each updated/inserted routing record for async Google Sheets sync.
+        # The background worker pushes to GSheets so scans return instantly (~50-200ms).
         for r_id in updated_rows_ids:
             db_manager.queue_sync(r_id)
         db_manager.trigger_excel_export()
@@ -1305,8 +1368,15 @@ def get_routing_records():
         sort_by  = request.args.get('sort_by', 'id')
         order    = request.args.get('order', 'DESC').upper()
 
-        # Sanitise sort params
-        allowed_sort = {'id', 'department', 'school_office', 'employee', 'code'}
+        # Build a dynamic "last_activity" expression: MAX of all non-empty timestamp columns
+        # This ensures recently-scanned records appear first regardless of which stage they're at.
+        ts_cols = ', '.join(
+            [f"COALESCE(timestamp_{i}, '')" for i in range(1, 11)]
+        )
+        last_activity_expr = f"MAX({ts_cols})"
+
+        # Sanitise sort params — 'last_activity' is a virtual computed sort
+        allowed_sort = {'id', 'department', 'school_office', 'employee', 'code', 'last_activity'}
         if sort_by not in allowed_sort:
             sort_by = 'id'
         if order not in ('ASC', 'DESC'):
@@ -1316,7 +1386,18 @@ def get_routing_records():
 
         where_sql = ""
         params    = []
-        if search:
+
+        # ── USER ROLE: filter records to only their own school/office ──
+        user_role   = session.get('user_role', '')
+        user_school = session.get('school_office', '')
+        if user_role == 'User' and user_school:
+            where_sql = "WHERE school_office = ?"
+            params.append(user_school)
+            if search:
+                where_sql += " AND (employee LIKE ? OR code LIKE ? OR department LIKE ? OR school_office LIKE ?)"
+                pat = f"%{search}%"
+                params += [pat, pat, pat, pat]
+        elif search:
             where_sql = ("WHERE (employee LIKE ? OR code LIKE ? "
                          "OR department LIKE ? OR school_office LIKE ?)")
             pat    = f"%{search}%"
@@ -1327,15 +1408,43 @@ def get_routing_records():
         ).fetchone()[0]
 
         offset = (page - 1) * per_page
+
+        # Determine ORDER BY clause
+        if sort_by == 'last_activity':
+            order_clause = f"{last_activity_expr} {order}, id DESC"
+        else:
+            order_clause = f"{sort_by} {order}"
+
         rows = conn.execute(
             f"SELECT * FROM routing_records {where_sql} "
-            f"ORDER BY {sort_by} {order} LIMIT ? OFFSET ?",
+            f"ORDER BY {order_clause} LIMIT ? OFFSET ?",
             params + [per_page, offset]
         ).fetchall()
 
+        # Batch-fetch doc_type for all codes in the result set
+        codes_in_page = list({dict(r)['code'] for r in rows if dict(r).get('code')})
+        code_doc_type_map = {}
+        if codes_in_page:
+            placeholders = ','.join(['?'] * len(codes_in_page))
+            lookup_rows = conn.execute(
+                f"SELECT code, doc_type FROM code_lookup WHERE code IN ({placeholders})", codes_in_page
+            ).fetchall()
+            code_doc_type_map = {row['code']: row['doc_type'] or '' for row in lookup_rows}
+
         conn.close()
 
-        records     = [dict(r) for r in rows]
+        records = []
+        for r in rows:
+            d = dict(r)
+            # Inject doc_type from code_lookup if not already present in the record
+            if not d.get('doc_type') and d.get('code'):
+                d['doc_type'] = code_doc_type_map.get(d['code'], '')
+            # Compute and include last_activity for the frontend
+            timestamps = [d.get(f'timestamp_{i}', '') or '' for i in range(1, 11)]
+            non_empty = [t for t in timestamps if t.strip()]
+            d['last_activity'] = max(non_empty) if non_empty else ''
+            records.append(d)
+
         total_pages = max(1, (total + per_page - 1) // per_page)
 
         return jsonify({
@@ -1382,7 +1491,16 @@ def update_record(record_id):
         conn.commit()
         conn.close()
 
-        db_manager.queue_sync(record_id)
+        # Push updated record to Google Sheets synchronously
+        ok, sheet_id, creds = _get_gsheets_config()
+        if ok:
+            push_conn = db_manager.get_db_connection()
+            updated = push_conn.execute("SELECT * FROM routing_records WHERE id = ?", (record_id,)).fetchone()
+            if updated:
+                db_manager._gsheets_push_with_retry(
+                    db_manager.push_row_to_gsheets, sheet_id, creds, dict(updated)
+                )
+            push_conn.close()
         db_manager.trigger_excel_export()
         return jsonify({'status': 'success', 'message': 'Record updated.'})
     except Exception as e:
@@ -1412,11 +1530,15 @@ def get_settings():
     try:
         # Never expose the actual credentials to the frontend
         has_creds = bool(db_manager.get_setting('gsheets_credentials', ''))
+        # Show whether credentials come from environment variables (persistent) or SQLite (wiped on Render)
+        creds_from_env = bool(os.environ.get('GSHEETS_CREDENTIALS'))
+        id_from_env = bool(os.environ.get('GSHEETS_ID'))
         return jsonify({
             'status':               'success',
             'gsheets_enabled':      db_manager.get_setting('gsheets_enabled', 'False') == 'True',
             'gsheets_id':           db_manager.get_setting('gsheets_id', ''),
             'gsheets_configured':   has_creds,
+            'gsheets_from_env':     creds_from_env and id_from_env,  # True = survives Render wipes
             'scanner_pin':          db_manager.get_setting('scanner_pin', 'scanner123'),
             'admin_pin':            db_manager.get_setting('admin_pin', 'admin123'),
         })
@@ -1489,7 +1611,7 @@ def gsheet_status():
 @app.route('/api/bulk_sync', methods=['POST'])
 @require_admin
 def bulk_sync():
-    """Push ALL existing routing records to Google Sheets at once."""
+    """Push ALL existing data (routing records, codes, users, master_data) to Google Sheets at once."""
     try:
         count, errors = db_manager.bulk_sync_to_gsheets()
         if errors and count == 0:
@@ -1498,7 +1620,7 @@ def bulk_sync():
                 'message': f'Bulk sync failed: {errors[0][:200]}',
                 'errors': errors[:10]
             })
-        msg = f'Synced {count} records to Google Sheets.'
+        msg = f'Synced {count} routing records + codes, users, and master data to Google Sheets.'
         if errors:
             msg += f' {len(errors)} had errors (showing first 5): ' + '; '.join(errors[:5])
         return jsonify({
@@ -1507,6 +1629,80 @@ def bulk_sync():
             'synced': count,
             'errors': errors[:10]
         })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/api/sync/pull_from_gsheets', methods=['POST'])
+@require_admin
+def pull_from_gsheets():
+    """Manually trigger a full Google Sheets → SQLite restore.
+    Useful for recovering data after a wipe or for debugging sync issues."""
+    try:
+        count, errors = db_manager.pull_all_from_gsheets()
+        if errors and count == 0:
+            return jsonify({
+                'status': 'error',
+                'message': f'Pull from GSheets failed: {errors[0][:300]}',
+                'errors': errors
+            })
+        msg = f'Restored {count} routing records from Google Sheets (+ codes, users, master data).'
+        if errors:
+            msg += ' Warnings: ' + '; '.join(errors[:5])
+        return jsonify({
+            'status': 'success' if not errors else 'partial',
+            'message': msg,
+            'restored': count,
+            'errors': errors[:10]
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/api/admin/reconcile_employee_names', methods=['POST'])
+@require_admin
+def reconcile_employee_names():
+    """Rewrite all routing_records.employee from 'LastName, FirstName' to 'FirstName LastName'.
+    Then trigger Excel export + queue GSheets sync for the rewritten rows."""
+    try:
+        rewritten, total, samples = db_manager.migrate_routing_employee_names()
+        msg = f'Rewritten {rewritten}/{total} employee names in routing records.'
+        if samples:
+            msg += ' Samples: ' + '; '.join(samples)
+        # Trigger Excel export and queue all routing records for GSheets resync
+        db_manager.trigger_excel_export()
+        conn = db_manager.get_db_connection()
+        all_ids = conn.execute("SELECT id FROM routing_records").fetchall()
+        conn.close()
+        for r in all_ids:
+            db_manager.queue_sync(r['id'])
+        return jsonify({'status': 'success', 'message': msg, 'rewritten': rewritten, 'total': total, 'samples': samples})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/admin/migrate_master_to_gsheets', methods=['POST'])
+@require_admin
+def migrate_master_to_gsheets():
+    """Push all 3 raw sheets from master_db.xlsx to Google Sheets as separate worksheets
+    ('Master Data Sheet1', 'Master Data Sheet2', 'Master Data Sheet3')."""
+    try:
+        enabled  = db_manager.get_setting('gsheets_enabled') == 'True'
+        sheet_id = db_manager.get_setting('gsheets_id')
+        creds    = db_manager.get_decrypted_setting('gsheets_credentials')
+        if not enabled or not sheet_id or not creds:
+            return jsonify({'status': 'error', 'message': 'Google Sheets is not configured. Enable it and save credentials first.'}), 400
+
+        success = db_manager._gsheets_push_with_retry(
+            db_manager.push_master_db_to_gsheets, sheet_id, creds
+        )
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': 'Successfully pushed master_db.xlsx (Sheet1, Sheet2, Sheet3) to Google Sheets.',
+            })
+        else:
+            return jsonify({'status': 'error', 'message': 'Migration failed after 3 retries. Check Render logs for details.'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -1558,7 +1754,7 @@ def forgot_password():
             conn.close()
             return jsonify({'status': 'error', 'message': 'Username not found.'}), 404
         
-        email = user.get('email', '') or ''
+        email = user['email'] if 'email' in user.keys() and user['email'] else ''
         if not email:
             conn.close()
             return jsonify({'status': 'error', 'message': 'No email address on file for this account. Contact your administrator.'}), 400

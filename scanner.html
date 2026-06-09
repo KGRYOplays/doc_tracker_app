@@ -602,7 +602,7 @@
         <div class="pin-gate-box">
             <div class="pin-gate-icon">🔐</div>
             <h2>Scanner Access</h2>
-            <p style="color:var(--text-muted); margin-bottom:6px;">Login required — <strong style="color:#a5b4fc;">Admin</strong> or <strong style="color:#a5b4fc;">Supervisor</strong> only</p>
+            <p style="color:var(--text-muted); margin-bottom:6px;">Login required — <strong style="color:#a5b4fc;">Admin</strong>, <strong style="color:#a5b4fc;">Supervisor</strong>, or <strong style="color:#a5b4fc;">User</strong></p>
             <input type="text" id="loginUsername" placeholder="Username" autocomplete="username"
                    style="width:100%; padding:13px; font-size:1rem; text-align:center; background:rgba(15,23,42,0.8); border:2px solid rgba(99,102,241,0.3); border-radius:12px; color:white; font-family:inherit; margin-bottom:12px; transition:all 0.3s;"
                    onkeypress="if(event.key==='Enter') document.getElementById('loginPassword').focus()">
@@ -728,8 +728,8 @@
             .then(data => {
                 if (data.status === 'success') {
                     const role = data.user.role;
-                    if (role !== 'Admin' && role !== 'Supervisor') {
-                        errEl.textContent = 'Access denied. Scanner requires Admin or Supervisor role.';
+                    if (role === 'Guest') {
+                        errEl.textContent = 'Access denied. Scanner requires a registered account.';
                         const box = document.querySelector('.pin-gate-box');
                         box.style.borderColor = 'var(--error)';
                         setTimeout(() => { box.style.borderColor = 'rgba(99,102,241,0.3)'; }, 1500);
@@ -739,7 +739,7 @@
                     document.getElementById('scannerRole').textContent = role;
                     document.getElementById('pinGateOverlay').style.display = 'none';
                     document.getElementById('scannerContent').style.display = 'block';
-                    initScanner();
+                    initScanner(data.user.school_office || '', role);
                 } else {
                     errEl.textContent = data.message || 'Login failed.';
                     const box = document.querySelector('.pin-gate-box');
@@ -770,12 +770,12 @@
             fetch('/api/check_auth')
             .then(r => r.json())
             .then(data => {
-                if (data.logged_in && (data.role === 'Admin' || data.role === 'Supervisor')) {
+                if (data.logged_in && data.role !== 'Guest') {
                     document.getElementById('scannerUsername').textContent = data.username;
                     document.getElementById('scannerRole').textContent = data.role;
                     document.getElementById('pinGateOverlay').style.display = 'none';
                     document.getElementById('scannerContent').style.display = 'block';
-                    initScanner();
+                    initScanner(data.school_office || '', data.role);
                 }
                 // Otherwise login gate stays visible
             })
@@ -784,7 +784,7 @@
             });
         };
 
-        function initScanner() {
+        function initScanner(userSchool, userRole) {
             loadAllSchools();
             const barcodeInp = document.getElementById('barcodeInput');
             barcodeInp.addEventListener('keypress', function(e) {
@@ -802,6 +802,29 @@
                     setTimeout(() => this.focus(), 150);
                 }
             });
+
+            // ── USER ROLE: lock receiving office to assigned school ──
+            if (userRole === 'User' && userSchool) {
+                const officeInput = document.getElementById('receivingOffice');
+                officeInput.value = userSchool;
+                officeInput.readOnly = true;
+                officeInput.style.opacity = '0.6';
+                officeInput.style.cursor = 'not-allowed';
+
+                // Show lock badge above the office picker
+                const pickerCard = document.getElementById('officePickerCard');
+                const existingBadge = document.getElementById('scannerUserLockBadge');
+                if (pickerCard && !existingBadge) {
+                    const lockDiv = document.createElement('div');
+                    lockDiv.id = 'scannerUserLockBadge';
+                    lockDiv.style.cssText = 'margin-bottom:14px; padding:10px 16px; background:rgba(99,102,241,0.1); border:1px solid rgba(99,102,241,0.25); border-radius:10px; font-size:0.9rem; color:#a5b4fc; display:flex; align-items:center; gap:8px;';
+                    lockDiv.innerHTML = '🔒 Scanner locked to your assigned office: <strong>' + userSchool + '</strong>';
+                    pickerCard.parentNode.insertBefore(lockDiv, pickerCard);
+                }
+
+                // Auto-load receivers for the locked office
+                loadReceiversForOffice();
+            }
         }
 
         // --- WEB AUDIO API CHIMES SYNTHESIS (Zero External File Dependencies) ---
