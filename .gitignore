@@ -32,3 +32,6 @@ static/qr_generated/
 # Remove these if you want to exclude them
 # *.db
 # *.xlsx
+
+# Local backup folder - keep copies on disk but never commit
+backup/

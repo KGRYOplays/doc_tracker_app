@@ -958,6 +958,17 @@
                 <button class="btn-auth" onclick="submitLogin()">🔓 Sign In</button>
                 <button class="btn-auth" onclick="guestLogin()" style="background:linear-gradient(135deg,#10b981,#059669);margin-bottom:4px;">👁️ Sign in as Guest (Read-Only Records)</button>
                 <button class="auth-switch" onclick="showRegister()">Don't have an account? Register here</button>
+                <button class="auth-switch" onclick="showForgotPassword()" style="margin-top:4px;">🔑 Forgot Passkey?</button>
+            </div>
+            <div id="forgotView" class="hidden">
+                <div class="auth-icon">🔑</div>
+                <h2>Forgot Passkey</h2>
+                <p class="auth-sub">Enter your username to reset your passkey</p>
+                <div class="auth-error" id="forgotError"></div>
+                <input type="text" id="forgotUsername" placeholder="Username"
+                       onkeypress="if(event.key==='Enter') submitForgotPassword()">
+                <button class="btn-auth" onclick="submitForgotPassword()" style="background:linear-gradient(135deg,#f59e0b,#d97706);">🔑 Reset Passkey</button>
+                <button class="auth-switch" onclick="showLogin(); document.getElementById('forgotError').textContent='';">← Back to Sign In</button>
             </div>
             <div id="registerView" class="hidden">
                 <div class="auth-icon">📝</div>
@@ -996,6 +1007,7 @@
 
             <button class="tab-link active" id="tab-btn-generator" onclick="switchTab('tab-generator')">🏷️ Generator</button>
             <button class="tab-link" id="tab-btn-records" onclick="switchTab('tab-records')">📋 Records</button>
+            <button class="tab-link hidden-tab" id="tab-btn-codes" onclick="switchTab('tab-codes')">📦 All Codes</button>
             <button class="tab-link hidden-tab" id="tab-btn-admin" onclick="switchTab('tab-admin')">🔒 Admin Panel</button>
             <a href="/scanner" class="nav-btn-scanner" id="tab-btn-scanner">📷 Scanner →</a>
         </div>
@@ -1028,16 +1040,10 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Select Employee</label>
+                        <label>Select or Type Employee Name</label>
                         <input type="text" id="employeeInput" list="employeesListGenerator" placeholder="Type or select employee...">
                         <datalist id="employeesListGenerator"></datalist>
-                    </div>
-
-                    <div class="or-divider">— OR REGISTER NEW —</div>
-
-                    <div class="form-group">
-                        <label>Custom Employee Name</label>
-                        <input type="text" id="newEmpName" placeholder="Enter name...">
+                        <div id="employeeSuggestInfo" style="font-size:0.85rem; color:var(--text-muted); margin-top:4px; min-height:1.2em;"></div>
                     </div>
 
                     <button class="btn btn-add" onclick="addToList()">➕ Add Employee to List</button>
@@ -1146,6 +1152,7 @@
                                 <th>School/Office</th>
                                 <th>Employee</th>
                                 <th>Barcode Code</th>
+                                <th>Doc Type</th>
                                 <th>Receiving Office</th>
                                 <th>Receiver</th>
                                 <th>Timestamp</th>
@@ -1155,7 +1162,7 @@
                         </thead>
                         <tbody id="recordsTableBody">
                             <tr>
-                                <td colspan="9" class="empty-list" style="text-align:center;">Loading routing data...</td>
+                                <td colspan="10" class="empty-list" style="text-align:center;">Loading routing data...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1163,7 +1170,48 @@
             </div>
         </div>
 
-        <!-- ════ TAB 3: ADMIN PANEL ════ -->
+        <!-- ════ TAB 3: ALL GENERATED CODES ════ -->
+        <div id="tab-codes" class="tab-panel">
+            <div class="glass-card">
+                <div class="card-title-row">
+                    <div class="card-icon">📦</div>
+                    <h2>All Generated Barcodes & QR Codes</h2>
+                </div>
+                <p style="color:var(--text-muted); margin-bottom:20px; font-size:0.9rem;">
+                    Centralized view of all barcodes/codes ever generated across all offices and schools. 
+                    Admin can view, search, and reprint any code from here.
+                </p>
+                <div class="table-actions">
+                    <div class="search-wrapper">
+                        <input type="text" id="codesSearch" onkeyup="filterCodesTable()" placeholder="Search code, department, school, doc type...">
+                    </div>
+                    <button class="btn btn-secondary" onclick="changeCodesPage(-1)" style="width:auto; height: 50px;">◀ Previous</button>
+                    <span id="codesPageIndicator" style="display:flex; align-items:center; padding:0 15px; font-weight:bold;">Page 1</span>
+                    <button class="btn btn-secondary" onclick="changeCodesPage(1)" style="width:auto; height: 50px;">Next ▶</button>
+                    <button class="btn btn-secondary" onclick="loadAllCodes()" style="width:auto; height: 50px;">🔄 Refresh</button>
+                </div>
+                <div style="width:100%; max-width:100%; overflow-x:auto; max-height:75vh; border-radius:var(--radius-md); border:1px solid var(--glass-border); background:rgba(15,23,42,0.4);">
+                    <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.75rem;">
+                        <thead>
+                            <tr>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">Code</th>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">Department</th>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">School/Office</th>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">Employees</th>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">Document Type</th>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">Generated At</th>
+                                <th style="position:sticky; top:0; z-index:10; background:rgba(30,41,59,0.95); color:#a5b4fc; padding:10px; border-bottom:1.5px solid var(--glass-border); text-transform:uppercase; text-align:center;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="codesTableBody">
+                            <tr><td colspan="7" class="empty-list" style="text-align:center;">Loading generated codes...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════ TAB 4: ADMIN PANEL ════ -->
         <div id="tab-admin" class="tab-panel">
             <!-- ADMIN: Dashboard Overview -->
             <div class="glass-card">
@@ -1325,7 +1373,7 @@
         var currentSchool = '';
 
         // ── AUTH GATE ────────────────────────────────────────────────
-        window.onload = function() {
+        function initAuthCheck() {
             // Check if user is already logged in
             fetch('/api/check_auth')
             .then(r => r.json())
@@ -1342,7 +1390,6 @@
                     // Show/hide tabs based on role
                     setupRoleBasedTabs(data.role);
                     
-                    // Check if admin for admin tab visibility
                     loadDepartments();
                     loadRoutingRecords();
                     if (data.role === 'Admin') {
@@ -1352,8 +1399,16 @@
                 }
                 // Otherwise login gate stays visible
             })
-            .catch(() => {});
-        };
+            .catch(function() {});
+        }
+
+        // Use both DOMContentLoaded and window.onload as fallback
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            initAuthCheck();
+        } else {
+            document.addEventListener('DOMContentLoaded', initAuthCheck);
+            window.addEventListener('load', initAuthCheck);
+        }
 
         function setupRoleBasedTabs(role) {
             // Admin: sees generator + records + admin panel + scanner
@@ -1362,24 +1417,28 @@
             // Guest: sees ONLY records (read-only view)
             
             const adminBtn = document.getElementById('tab-btn-admin');
+            const codesBtn = document.getElementById('tab-btn-codes');
             const genBtn = document.getElementById('tab-btn-generator');
             const recBtn = document.getElementById('tab-btn-records');
             const scannerLink = document.getElementById('tab-btn-scanner');
             
             if (role === 'Admin') {
                 adminBtn.classList.remove('hidden-tab');
+                codesBtn.classList.remove('hidden-tab');
                 genBtn.classList.remove('hidden-tab');
                 recBtn.classList.remove('hidden-tab');
                 scannerLink.classList.remove('hidden-tab');
                 switchTab('tab-generator');
             } else if (role === 'Guest') {
                 adminBtn.classList.add('hidden-tab');
+                codesBtn.classList.add('hidden-tab');
                 genBtn.classList.add('hidden-tab');
                 recBtn.classList.remove('hidden-tab');
                 scannerLink.classList.add('hidden-tab');
                 switchTab('tab-records');
             } else {
                 adminBtn.classList.add('hidden-tab');
+                codesBtn.classList.add('hidden-tab');
                 genBtn.classList.remove('hidden-tab');
                 recBtn.classList.remove('hidden-tab');
                 scannerLink.classList.remove('hidden-tab');
@@ -1431,10 +1490,94 @@
             });
         }
 
+        function showForgotPassword() {
+            document.getElementById('loginView').classList.add('hidden');
+            document.getElementById('registerView').classList.add('hidden');
+            document.getElementById('forgotView').classList.remove('hidden');
+            document.getElementById('forgotError').textContent = '';
+            document.getElementById('forgotUsername').value = '';
+        }
+
         function showLogin() {
             document.getElementById('registerView').classList.add('hidden');
+            document.getElementById('forgotView').classList.add('hidden');
             document.getElementById('loginView').classList.remove('hidden');
             document.getElementById('loginError').textContent = '';
+            document.getElementById('forgotError').textContent = '';
+        }
+
+        function submitForgotPassword() {
+            const username = document.getElementById('forgotUsername').value.trim();
+            const errEl = document.getElementById('forgotError');
+            if (!username) { errEl.textContent = 'Please enter your username.'; return; }
+            errEl.textContent = '';
+            
+            fetch('/api/forgot_password', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert(data.message);
+                    showLogin();
+                } else if (data.status === 'warning') {
+                    alert(data.message);
+                    showLogin();
+                } else {
+                    errEl.textContent = data.message || 'Password reset failed.';
+                }
+            })
+            .catch(() => { errEl.textContent = 'Network error.'; });
+        }
+
+        function showChangePasswordDialog(forceChange) {
+            // Create modal for changing password
+            const dialog = document.createElement('div');
+            dialog.id = 'changePasswordDialog';
+            dialog.style.cssText = 'position:fixed;inset:0;background:rgba(9,11,26,0.95);z-index:20000;display:flex;align-items:center;justify-content:center;';
+            dialog.innerHTML = `
+                <div style="background:rgba(30,41,59,0.95);border:1px solid #6366f1;border-radius:20px;padding:40px;max-width:420px;width:90%;text-align:center;">
+                    <div style="font-size:2.5rem;margin-bottom:12px;">🔑</div>
+                    <h2 style="margin-bottom:4px;">${forceChange ? 'Change Required' : 'Change Passkey'}</h2>
+                    <p style="color:var(--text-muted);margin-bottom:20px;font-size:0.9rem;">
+                        ${forceChange ? 'Your passkey is the default or has been reset. Please set a new passkey.' : 'Update your account passkey.'}
+                    </p>
+                    <div id="changePwError" style="color:var(--error);font-weight:600;min-height:22px;margin-bottom:8px;font-size:0.9rem;"></div>
+                    <input type="password" id="changePwCurrent" placeholder="Current Passkey" style="width:100%;padding:14px;font-size:1rem;background:rgba(15,23,42,0.8);border:2px solid #6366f1;border-radius:12px;color:white;margin-bottom:12px;">
+                    <input type="password" id="changePwNew" placeholder="New Passkey (min 6 characters)" style="width:100%;padding:14px;font-size:1rem;background:rgba(15,23,42,0.8);border:2px solid #6366f1;border-radius:12px;color:white;margin-bottom:16px;">
+                    <button onclick="executeChangePassword(${forceChange})" style="width:100%;padding:14px;background:linear-gradient(135deg,#6366f1,#a855f7);border:none;border-radius:12px;color:white;font-weight:700;cursor:pointer;margin-bottom:8px;">${forceChange ? '✅ Update Passkey' : '🔑 Change Passkey'}</button>
+                    ${!forceChange ? '<button onclick="document.getElementById(\'changePasswordDialog\').remove()" style="background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:0.85rem;">Cancel</button>' : ''}
+                </div>
+            `;
+            document.body.appendChild(dialog);
+        }
+
+        function executeChangePassword(forceChange) {
+            const current = document.getElementById('changePwCurrent').value.trim();
+            const newPw = document.getElementById('changePwNew').value.trim();
+            const errEl = document.getElementById('changePwError');
+            
+            if (!current || !newPw) { errEl.textContent = 'Please fill in both fields.'; return; }
+            if (newPw.length < 6) { errEl.textContent = 'New passkey must be at least 6 characters.'; return; }
+            errEl.textContent = '';
+            
+            fetch('/api/change_password', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({current_password: current, new_password: newPw})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('Passkey changed successfully!');
+                    document.getElementById('changePasswordDialog').remove();
+                } else {
+                    errEl.textContent = data.message || 'Failed to change passkey.';
+                }
+            })
+            .catch(() => { errEl.textContent = 'Network error.'; });
         }
 
         function submitLogin() {
@@ -1467,6 +1610,11 @@
                     if (data.user.role === 'Admin') {
                         loadSettings();
                         loadAdminUsers();
+                    }
+                    
+                    // Force password change if required
+                    if (data.requires_password_change) {
+                        showChangePasswordDialog(true);
                     }
                 } else {
                     errEl.textContent = data.message || 'Login failed.';
@@ -1551,6 +1699,9 @@
             if (tabId === 'tab-records') {
                 loadRoutingRecords();
             }
+            if (tabId === 'tab-codes') {
+                loadAllCodes(1);
+            }
             if (tabId === 'tab-admin') {
                 loadSettings();
                 loadAdminUsers();
@@ -1599,6 +1750,10 @@
                     opt.text = d;
                     select.appendChild(opt);
                 });
+                // If User role, auto-lock dept + school after departments load
+                if (currentUserRole === 'User' && currentSchool) {
+                    setupUserLocks(currentUserRole);
+                }
             });
         }
 
@@ -1666,19 +1821,40 @@
             document.getElementById('employeeInput').value = '';
             var empDatalist = document.getElementById('employeesListGenerator');
             empDatalist.innerHTML = '';
+            var infoEl = document.getElementById('employeeSuggestInfo');
+            infoEl.innerHTML = '';
             
-            fetch('/api/get_employees', {
+            fetch('/api/get_employees_suggest', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({department: dept, school: school})
             })
             .then(res => res.json())
             .then(data => {
-                data.forEach(e => {
+                if (data.status !== 'success') return;
+                var sameCount = 0;
+                var otherCount = 0;
+                // 1. Same-school employees (top priority)
+                (data.same_school || []).forEach(function(e) {
                     var opt = document.createElement('option');
                     opt.value = e;
                     empDatalist.appendChild(opt);
+                    sameCount++;
                 });
+                // 2. Cross-school employees (shown with school label)
+                (data.other_schools || []).forEach(function(item) {
+                    var opt = document.createElement('option');
+                    opt.value = item.name;
+                    opt.label = item.name + ' [Other: ' + item.school + ']';
+                    empDatalist.appendChild(opt);
+                    otherCount++;
+                });
+                // Update info text
+                var html = '<span style="color:var(--success);">✅ ' + sameCount + ' employee' + (sameCount !== 1 ? 's' : '') + ' from "' + school + '"</span>';
+                if (otherCount > 0) {
+                    html += ' &nbsp;·&nbsp; <span style="color:var(--text-muted);">💡 Plus ' + otherCount + ' from other schools</span>';
+                }
+                infoEl.innerHTML = html;
             });
         }
 
@@ -1743,26 +1919,80 @@
             });
         }
 
+        // ── USER ROLE: LOCK DEPT + SCHOOL TO ASSIGNED VALUES ─────────
+        function setupUserLocks(role) {
+            if (role !== 'User' || !currentSchool) return;
+            // User role: lock dept + school to their assigned school
+            // First find which department contains this school
+            fetch('/api/get_departments')
+            .then(r => r.json())
+            .then(depts => {
+                var foundDept = '';
+                var promises = depts.map(function(d) {
+                    return fetch('/api/get_schools', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({department: d})
+                    }).then(r => r.json()).then(schools => {
+                        if (schools.includes(currentSchool)) foundDept = d;
+                    });
+                });
+                Promise.all(promises).then(function() {
+                    if (!foundDept) return;
+                    // Set department
+                    var deptSel = document.getElementById('deptSelect');
+                    deptSel.value = foundDept;
+                    // Load schools and set school
+                    var schoolsDl = document.getElementById('schoolsListGenerator');
+                    schoolsDl.innerHTML = '';
+                    fetch('/api/get_schools', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({department: foundDept})
+                    }).then(r => r.json()).then(function(schools) {
+                        schools.forEach(function(s) {
+                            var opt = document.createElement('option');
+                            opt.value = s;
+                            schoolsDl.appendChild(opt);
+                        });
+                        document.getElementById('schoolInput').value = currentSchool;
+                        onSchoolInput();
+                        // Lock the department and school fields
+                        deptSel.disabled = true;
+                        deptSel.style.opacity = '0.6';
+                        document.getElementById('schoolInput').disabled = true;
+                        document.getElementById('schoolInput').style.opacity = '0.6';
+                        // Show lock badge
+                        var lockDiv = document.createElement('div');
+                        lockDiv.id = 'userLockBadge';
+                        lockDiv.style.cssText = 'margin-bottom:15px; padding:10px 16px; background:rgba(99,102,241,0.1); border:1px solid rgba(99,102,241,0.25); border-radius:10px; font-size:0.9rem; color:#a5b4fc; display:flex; align-items:center; gap:8px;';
+                        lockDiv.innerHTML = '🔒 Locked to: <strong>' + foundDept + '</strong> — <strong>' + currentSchool + '</strong>';
+                        var card = document.querySelector('#tab-generator .glass-card .card-title-row');
+                        if (card && !document.getElementById('userLockBadge')) {
+                            card.parentNode.insertBefore(lockDiv, card.nextSibling);
+                        }
+                    });
+                });
+            });
+        }
+
         // ── BATCH BINDING LIST ───────────────────────────────────────
         function addToList() {
             var dept = document.getElementById('deptSelect').value;
             var school = document.getElementById('schoolInput').value.trim();
             var emp = document.getElementById('employeeInput').value.trim();
-            var newEmp = document.getElementById('newEmpName').value.trim();
             
-            var name = newEmp || emp;
-            if (!dept || !school || !name) {
-                showAlert('error', 'Please fill in all employee registration fields!');
+            if (!dept || !school || !emp) {
+                showAlert('error', 'Please select or type an employee name!');
                 return;
             }
-            if (addedEmployees.some(e => e.name === name)) {
+            if (addedEmployees.some(e => e.name === emp)) {
                 showAlert('info', 'Employee already added to this batch!');
                 return;
             }
 
-            addedEmployees.push({department: dept, school: school, name: name});
+            addedEmployees.push({department: dept, school: school, name: emp});
             document.getElementById('employeeInput').value = '';
-            document.getElementById('newEmpName').value = '';
             updateListDisplay();
         }
 
@@ -2023,15 +2253,22 @@
         // ── ROUTING DATATABLE ────────────────────────────────────────
         function loadRoutingRecords(page = 1) {
             currentPage = page;
-            const query = document.getElementById('tableSearch').value.trim();
+            const query = document.getElementById('tableSearch') ? document.getElementById('tableSearch').value.trim() : '';
             const searchParam = query ? '&search=' + encodeURIComponent(query) : '';
             fetch('/api/get_routing_records?page=' + page + '&per_page=100' + searchParam)
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'success') {
-                    const totalBarcodes = new Set(data.records.map(r => r.code)).size;
-                    document.getElementById('stat-total-barcodes').innerText = totalBarcodes;
-                    document.getElementById('stat-total-employees').innerText = data.pagination.total;
+                    // Use proper dashboard stats API
+                    fetch('/api/dashboard_stats')
+                    .then(r => r.json())
+                    .then(stats => {
+                        if (stats.status === 'success') {
+                            document.getElementById('stat-total-barcodes').innerText = stats.unique_barcodes;
+                            document.getElementById('stat-total-employees').innerText = stats.total_employees;
+                        }
+                    })
+                    .catch(() => {});
                     
                     document.getElementById('pageIndicator').innerText = 'Page ' + currentPage + ' of ' + data.pagination.total_pages;
                     
@@ -2039,6 +2276,9 @@
                 } else {
                     showAlert('error', 'Failed to retrieve records: ' + data.message);
                 }
+            })
+            .catch(function(err) {
+                console.error('Error loading routing records:', err);
             });
         }
 
@@ -2055,7 +2295,7 @@
         function renderRoutingTable(records) {
             const tbody = document.getElementById('recordsTableBody');
             if (records.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="9" class="empty-list" style="text-align:center;">No tracking data logged yet.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="10" class="empty-list" style="text-align:center;">No tracking data logged yet.</td></tr>';
                 return;
             }
             
@@ -2087,6 +2327,7 @@
                     <td>${r.school_office || ""}</td>
                     <td style="font-weight:700;">${r.employee || ""}</td>
                     <td><span class="table-code">${r.code || ""}</span></td>
+                    <td>${r.doc_type || "-"}</td>
                     <td><span class="table-office-badge">${latestOffice || "-"}</span></td>
                     <td>${latestReceiver || "-"}</td>
                     <td class="table-time">${latestTs || "-"}</td>
@@ -2548,6 +2789,76 @@
             el.innerHTML = '<span style="color:' + (c[type]||'#94a3b8') + '; font-size:0.9rem; font-weight:600;">' + (ic[type]||'') + ' ' + msg + '</span>';
         }
 
+        // ── ALL GENERATED CODES DATATABLE ───────────────────────────────
+        var codesPage = 1;
+        function loadAllCodes(page) {
+            if (page === undefined) page = codesPage;
+            codesPage = page;
+            var query = document.getElementById('codesSearch').value.trim();
+            var searchParam = query ? '&search=' + encodeURIComponent(query) : '';
+            fetch('/api/admin/all_codes?page=' + page + '&per_page=50' + searchParam)
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (data.status === 'success') {
+                    document.getElementById('codesPageIndicator').innerText = 'Page ' + page + ' of ' + data.pagination.total_pages;
+                    renderCodesTable(data.codes);
+                } else {
+                    showAlert('error', 'Failed to load codes: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(function(err) {
+                showAlert('error', 'Network error loading codes: ' + err.message);
+            });
+        }
+
+        function changeCodesPage(delta) {
+            var newPage = codesPage + delta;
+            if (newPage < 1) newPage = 1;
+            loadAllCodes(newPage);
+        }
+
+        function renderCodesTable(codes) {
+            var tbody = document.getElementById('codesTableBody');
+            if (!codes || codes.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="empty-list" style="text-align:center;">No barcodes/codes generated yet.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = '';
+            codes.forEach(function(c) {
+                var empList = c.employees_list || [];
+                var empDisplay = empList.length > 3 ? empList.slice(0, 3).join(', ') + ' +' + (empList.length - 3) + ' more' : empList.join(', ');
+                var tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><span class="table-code">${c.code || ''}</span></td>
+                    <td>${c.department || ''}</td>
+                    <td>${c.school_office || ''}</td>
+                    <td style="font-size:0.7rem; max-width:200px; overflow:hidden; text-overflow:ellipsis;">${empDisplay}</td>
+                    <td>${c.doc_type || ''}</td>
+                    <td class="table-time">${c.generated_at || ''}</td>
+                    <td>
+                        <button onclick="reprintBarcodeFromCodes('${c.code}')" 
+                                style="background: linear-gradient(135deg, var(--success), #059669); color: white; border: none; border-radius: 8px; padding: 6px 12px; font-size: 0.75rem; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);">
+                            🖨️ Reprint
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function reprintBarcodeFromCodes(code) {
+            // Reuse the existing reprintBarcode function
+            reprintBarcode(code);
+        }
+
+        let codesSearchTimeout = null;
+        function filterCodesTable() {
+            if (codesSearchTimeout) clearTimeout(codesSearchTimeout);
+            codesSearchTimeout = setTimeout(function() {
+                codesPage = 1;
+                loadAllCodes(1);
+            }, 300);
+        }
 </script>
 </body>
 </html>
