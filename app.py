@@ -30,6 +30,12 @@ if not os.path.exists(QR_FOLDER):
 # Initialize database on startup
 db_manager.init_db()
 
+# Seed default SDO Manila logo if none set
+if not db_manager.get_setting('logo_url', ''):
+    logo_path = 'static/uploads/sdo_manila_logo.png'
+    if os.path.exists(logo_path):
+        db_manager.save_setting('logo_url', '/static/uploads/sdo_manila_logo.png')
+
 # Serialize concurrent scan writes so SELECT → INSERT/UPDATE is atomic
 scan_lock = threading.Lock()
 
@@ -305,9 +311,9 @@ def create_label_pdf(codes, dpi=300):
     return buf
 
 
-def create_document_page_pdf(code, doc_type='barcode'):
+def create_document_page_pdf(code):
     """
-    Create a PDF with the barcode placed at the TOP RIGHT corner of a document.
+    Create a PDF with QR + barcode placed at the TOP RIGHT corner of a document.
     The page looks like a formal document with header area.
     """
     from reportlab.lib.pagesizes import letter
@@ -320,34 +326,36 @@ def create_document_page_pdf(code, doc_type='barcode'):
     c = canvas.Canvas(buf, pagesize=letter)
     width, height = letter  # 612 x 792 points
     
-    # ── Generate the barcode image ──
-    if doc_type == 'qr':
-        pil_img = generate_qr_image(code)
-    else:
-        pil_img = generate_barcode_image(code)
+    # ── Generate both images ──
+    qr_img = generate_qr_image(code)
+    bc_img = generate_barcode_image(code)
+    gap = 0.1 * inch
     
-    # Convert PIL to ImageReader
-    temp_buf = io.BytesIO()
-    pil_img.save(temp_buf, format='PNG')
-    temp_buf.seek(0)
+    # ── Place both at TOP RIGHT corner ──
+    img_w_inches = 1.5
+    img_w = img_w_inches * inch
+    qr_aspect = qr_img.height / qr_img.width
+    bc_aspect = bc_img.height / bc_img.width
+    qr_h = img_w * qr_aspect
+    bc_h = img_w * bc_aspect
+    total_h = qr_h + gap + bc_h
     
-    # ── Place barcode at TOP RIGHT corner ──
-    # Barcode target size: 1.5 inches wide on the page
-    target_w_inches = 1.5
-    target_w = target_w_inches * inch  # 108 points
-    aspect = pil_img.height / pil_img.width
-    target_h = target_w * aspect
-    
-    # Position: top right corner with 0.5 inch margins
     margin = 0.5 * inch
-    barcode_x = width - margin - target_w
-    barcode_y = height - margin - target_h
+    x = width - margin - img_w
+    y = height - margin - total_h
     
-    c.drawImage(ImageReader(temp_buf), barcode_x, barcode_y, width=target_w, height=target_h)
+    def _draw(pil_img, draw_x, draw_y, dw, dh):
+        tmp = io.BytesIO()
+        pil_img.save(tmp, format='PNG')
+        tmp.seek(0)
+        c.drawImage(ImageReader(tmp), draw_x, draw_y, width=dw, height=dh)
+    
+    _draw(qr_img, x, y + bc_h + gap, img_w, qr_h)
+    _draw(bc_img, x, y, img_w, bc_h)
     
     # ── Document header / title ──
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(margin, height - 0.8 * inch, "DOCUMENT ROUTING SLIP")
+    c.drawString(margin, height - 0.8 * inch, "DOCUMENT TRACKING SLIP")
     
     # ── Document info lines ──
     c.setFont("Helvetica", 11)
@@ -457,11 +465,11 @@ def create_document_page_pdf(code, doc_type='barcode'):
     return buf
 
 
-def create_barcode_overlay_pdf(code, doc_type='barcode', position='top-right', page_size='legal'):
+def create_barcode_overlay_pdf(code, position='top-right', page_size='legal'):
     """
-    Create a minimal PDF with ONLY the barcode image at the specified position.
-    No headers, no routing table - just the barcode on a blank page.
-    Useful for printing the barcode onto an already-printed document.
+    Create a minimal PDF with QR + barcode at the specified position.
+    No headers, no routing table - just the labels on a blank page.
+    Useful for printing onto an already-printed document.
     
     Supported positions: top-right, top-left, bottom-right, bottom-left
     Supported page sizes: legal (8.5x13), letter (8.5x11)
@@ -481,45 +489,50 @@ def create_barcode_overlay_pdf(code, doc_type='barcode', position='top-right', p
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=pagesize)
     
-    if doc_type == 'qr':
-        pil_img = generate_qr_image(code)
-    else:
-        pil_img = generate_barcode_image(code)
+    qr_img = generate_qr_image(code)
+    bc_img = generate_barcode_image(code)
+    gap = 0.1 * inch
     
-    temp_buf = io.BytesIO()
-    pil_img.save(temp_buf, format='PNG')
-    temp_buf.seek(0)
-    
-    target_w_inches = 1.5
-    target_w = target_w_inches * inch
-    aspect = pil_img.height / pil_img.width
-    target_h = target_w * aspect
+    img_w_inches = 1.5
+    img_w = img_w_inches * inch
+    qr_aspect = qr_img.height / qr_img.width
+    bc_aspect = bc_img.height / bc_img.width
+    qr_h = img_w * qr_aspect
+    bc_h = img_w * bc_aspect
+    total_h = qr_h + gap + bc_h
     
     margin = 0.5 * inch
     
     if position == 'top-right':
-        barcode_x = width - margin - target_w
-        barcode_y = height - margin - target_h
+        x = width - margin - img_w
+        y = height - margin - total_h
     elif position == 'top-left':
-        barcode_x = margin
-        barcode_y = height - margin - target_h
+        x = margin
+        y = height - margin - total_h
     elif position == 'bottom-right':
-        barcode_x = width - margin - target_w
-        barcode_y = margin
+        x = width - margin - img_w
+        y = margin
     elif position == 'bottom-left':
-        barcode_x = margin
-        barcode_y = margin
+        x = margin
+        y = margin
     else:
-        barcode_x = width - margin - target_w
-        barcode_y = height - margin - target_h
+        x = width - margin - img_w
+        y = height - margin - total_h
     
-    c.drawImage(ImageReader(temp_buf), barcode_x, barcode_y, width=target_w, height=target_h)
+    def _draw(pil_img, draw_x, draw_y, dw, dh):
+        tmp = io.BytesIO()
+        pil_img.save(tmp, format='PNG')
+        tmp.seek(0)
+        c.drawImage(ImageReader(tmp), draw_x, draw_y, width=dw, height=dh)
+    
+    _draw(qr_img, x, y + bc_h + gap, img_w, qr_h)
+    _draw(bc_img, x, y, img_w, bc_h)
     
     c.setFont("Helvetica", 8)
     code_label = f"CODE: {code}"
     code_label_w = c.stringWidth(code_label, "Helvetica", 8)
-    label_x = barcode_x + (target_w - code_label_w) / 2
-    label_y = barcode_y - 12
+    label_x = x + (img_w - code_label_w) / 2
+    label_y = y - 12
     c.drawString(label_x, label_y, code_label)
     
     c.save()
@@ -574,6 +587,7 @@ def login():
         session['user_role'] = user['role']
         session['school_office'] = user['school_office'] or ''
         session['supervised_schools'] = supervised
+        session['email'] = user['email'] or ''
         session.permanent = True
         
         return jsonify({
@@ -582,6 +596,7 @@ def login():
             'requires_password_change': bool(user['requires_password_change']),
             'user': {
                 'username': user['username'],
+                'email': user['email'] or '',
                 'role': user['role'],
                 'school_office': user['school_office'] or '',
                 'supervised_schools': supervised
@@ -676,6 +691,7 @@ def check_auth():
     return jsonify({
         'logged_in': bool(session.get('username')),
         'username': session.get('username', ''),
+        'email': session.get('email', ''),
         'role': session.get('user_role', 'Viewer'),
         'school_office': session.get('school_office', ''),
         'supervised_schools': session.get('supervised_schools', '')
@@ -722,7 +738,7 @@ def get_user_profile():
     try:
         conn = db_manager.get_db_connection()
         user = conn.execute(
-            "SELECT username, role, status, school_office, supervised_schools FROM users WHERE username = ?",
+            "SELECT username, email, role, status, school_office, supervised_schools FROM users WHERE username = ?",
             (session['username'],)
         ).fetchone()
         conn.close()
@@ -1067,7 +1083,6 @@ def generate_code():
     try:
         data       = request.json
         code       = generate_6_digit_code()
-        code_type  = data.get('code_type', 'barcode')
         department = data.get('department')
         school     = data.get('school')
         employees  = data.get('employees')
@@ -1105,7 +1120,7 @@ def generate_code():
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
         basename  = f"code_{timestamp}"
 
-        # Generate QR (1.5" x 1.5") and Barcode (1.5" x 0.75") side by side
+        # Generate QR (1.5" x 1.5") and Barcode (1.5" x 0.75")
         qr_img = generate_qr_image(code)
         qr_path = os.path.join(QR_FOLDER, f"{basename}_qr.png")
         qr_img.save(qr_path)
@@ -1140,19 +1155,17 @@ def generate_code():
 
 @app.route('/api/label_image/<code>')
 def label_image(code):
-    """
-    Serve a PNG image of the barcode at 1.5-inch width with border box.
-    Query param: type=barcode|qr (default: barcode)
-    """
+    """Serve a combined PNG image (QR top, barcode bottom) for the given code."""
     try:
-        img_type = request.args.get('type', 'barcode')
-        if img_type == 'qr':
-            img = generate_qr_image(code.upper())
-        else:
-            img = generate_barcode_image(code.upper())
-        
+        qr_img = generate_qr_image(code.upper())
+        bc_img = generate_barcode_image(code.upper())
+        combined_w = max(qr_img.width, bc_img.width)
+        combined_h = qr_img.height + bc_img.height
+        combined = Image.new('RGB', (combined_w, combined_h), 'white')
+        combined.paste(qr_img, ((combined_w - qr_img.width) // 2, 0))
+        combined.paste(bc_img, ((combined_w - bc_img.width) // 2, qr_img.height))
         buf = io.BytesIO()
-        img.save(buf, format='PNG')
+        combined.save(buf, format='PNG')
         buf.seek(0)
         return send_file(buf, mimetype='image/png')
     except Exception as e:
@@ -1162,18 +1175,17 @@ def label_image(code):
 @app.route('/api/document_page', methods=['POST'])
 def document_page():
     """
-    Generate a PDF with barcode at TOP RIGHT corner.
-    Body: { "code": "...", "type": "barcode|qr" }
+    Generate a PDF with QR + barcode at TOP RIGHT corner.
+    Body: { "code": "..." }
     """
     try:
         data = request.json
         code = data.get('code', '').strip().upper()
-        img_type = data.get('type', 'barcode')
         
         if not code:
             return jsonify({'status': 'error', 'message': 'Code is required.'}), 400
         
-        pdf_buf = create_document_page_pdf(code, img_type)
+        pdf_buf = create_document_page_pdf(code)
         return send_file(
             pdf_buf,
             mimetype='application/pdf',
@@ -1187,8 +1199,8 @@ def document_page():
 @app.route('/api/batch_labels', methods=['POST'])
 def batch_labels():
     """
-    Generate a PDF for batch printing multiple barcodes.
-    Body: { "codes": [{"code": "...", "type": "barcode|qr"}, ...] }
+    Generate a PDF for batch printing (QR + barcode per code).
+    Body: { "codes": [{"code": "..."}, ...] }
     """
     try:
         data = request.json
@@ -1211,20 +1223,19 @@ def batch_labels():
 @app.route('/api/barcode_overlay', methods=['POST'])
 def barcode_overlay():
     """
-    Generate a minimal overlay PDF with ONLY the barcode at the specified position.
-    Body: { "code": "...", "type": "barcode|qr", "position": "top-right|top-left|bottom-right|bottom-left", "page_size": "legal|letter" }
+    Generate a minimal overlay PDF with QR + barcode at the specified position.
+    Body: { "code": "...", "position": "top-right|top-left|bottom-right|bottom-left", "page_size": "legal|letter" }
     """
     try:
         data = request.json
         code = data.get('code', '').strip().upper()
-        img_type = data.get('type', 'barcode')
         position = data.get('position', 'top-right')
         page_size = data.get('page_size', 'legal')
         
         if not code:
             return jsonify({'status': 'error', 'message': 'Code is required.'}), 400
         
-        pdf_buf = create_barcode_overlay_pdf(code, img_type, position, page_size)
+        pdf_buf = create_barcode_overlay_pdf(code, position, page_size)
         return send_file(
             pdf_buf,
             mimetype='application/pdf',
@@ -1355,9 +1366,9 @@ def log_scan():
                     updated_rows_ids.append(record_id)
                     slot_updated = empty_slot
 
-                # Auto-set status to 'released' when scanned at RECORDS SIGNATURE
+                # Auto-set status to 'released' when scanned at RECORDS SERVICES
                 # unless admin manually set it to 'with corrections'
-                if receiving_office.strip().upper() == 'RECORDS SIGNATURE':
+                if receiving_office.strip().upper() == 'RECORDS SERVICES':
                     prev_status = row['status'] if row else ''
                     if prev_status != 'with corrections':
                         conn.execute(
@@ -1396,20 +1407,26 @@ def get_routing_records():
         page     = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 50))
         search   = request.args.get('search', '').strip()
-        sort_by  = request.args.get('sort_by', 'id')
+        sort_by  = request.args.get('sort_by', 'last_activity')
         order    = request.args.get('order', 'DESC').upper()
 
-        # Build a dynamic "last_activity" expression: MAX of all non-empty timestamp columns
-        # This ensures recently-scanned records appear first regardless of which stage they're at.
-        ts_cols = ', '.join(
-            [f"COALESCE(timestamp_{i}, '')" for i in range(1, 11)]
+        # Build a dynamic "last_activity" expression: MAX of all timestamp columns
+        # converted to YYYYMMDD so cross-year comparisons work correctly.
+        def _sortable_ts(col):
+            return (
+                f"CASE WHEN {col} != '' AND {col} IS NOT NULL "
+                f"THEN SUBSTR({col}, 7, 4) || SUBSTR({col}, 1, 2) || SUBSTR({col}, 4, 2) "
+                f"ELSE '00000000' END"
+            )
+        ts_exprs = ', '.join(
+            _sortable_ts(f"timestamp_{i}") for i in range(1, 11)
         )
-        last_activity_expr = f"MAX({ts_cols})"
+        last_activity_expr = f"MAX({ts_exprs})"
 
         # Sanitise sort params — 'last_activity' is a virtual computed sort
-        allowed_sort = {'id', 'department', 'school_office', 'employee', 'code', 'last_activity'}
+        allowed_sort = {'id', 'department', 'school_office', 'employee', 'code', 'last_activity', 'status', 'doc_type'}
         if sort_by not in allowed_sort:
-            sort_by = 'id'
+            sort_by = 'last_activity'
         if order not in ('ASC', 'DESC'):
             order = 'DESC'
 
@@ -1491,10 +1508,18 @@ def get_routing_records():
             # Inject doc_type from code_lookup if not already present in the record
             if not d.get('doc_type') and d.get('code'):
                 d['doc_type'] = code_doc_type_map.get(d['code'], '')
-            # Compute and include last_activity for the frontend
+            # Compute last_activity (most recent non-empty timestamp) for display
             timestamps = [d.get(f'timestamp_{i}', '') or '' for i in range(1, 11)]
             non_empty = [t for t in timestamps if t.strip()]
-            d['last_activity'] = max(non_empty) if non_empty else ''
+            if non_empty:
+                def _ts_key(t):
+                    try:
+                        return t[6:10] + t[0:2] + t[3:5]
+                    except (IndexError, TypeError):
+                        return t
+                d['last_activity'] = max(non_empty, key=_ts_key)
+            else:
+                d['last_activity'] = ''
             records.append(d)
 
         total_pages = max(1, (total + per_page - 1) // per_page)
@@ -1594,9 +1619,151 @@ def get_settings():
             'scanner_pin':          db_manager.get_setting('scanner_pin', 'scanner123'),
             'admin_pin':            db_manager.get_setting('admin_pin', 'admin123'),
             'gsheets_pull_interval': db_manager.get_setting('gsheets_pull_interval', '5'),
+            'logo_url': db_manager.get_setting('logo_url', ''),
+            'header_line_1': db_manager.get_setting('header_line_1', 'Republic of the Philippines'),
+            'header_line_2': db_manager.get_setting('header_line_2', 'Department of Education - NCR'),
+            'header_line_3': db_manager.get_setting('header_line_3', 'Schools Division Office of Manila'),
+            'system_title': db_manager.get_setting('system_title', 'Document Tracking System'),
+            'system_title_font': db_manager.get_setting('system_title_font', ''),
+            'custom_font_url': db_manager.get_setting('custom_font_url', ''),
+            'custom_font_format': db_manager.get_setting('custom_font_format', ''),
+            'title_letter_spacing': db_manager.get_setting('title_letter_spacing', '0'),
+            'title_bg_url': db_manager.get_setting('title_bg_url', ''),
+            'title_bg_opacity': db_manager.get_setting('title_bg_opacity', '7'),
+            'title_glow_enabled': db_manager.get_setting('title_glow_enabled', 'True') == 'True',
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/api/upload_logo', methods=['POST'])
+@require_admin
+def upload_logo():
+    try:
+        # Handle logo removal
+        if request.is_json and request.json.get('remove'):
+            current_logo = db_manager.get_setting('logo_url', '')
+            if current_logo:
+                file_path = os.path.join('static', 'uploads', os.path.basename(current_logo))
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            db_manager.save_setting('logo_url', '')
+            return jsonify({'status': 'success', 'message': 'Logo removed.'})
+
+        # Handle logo upload
+        if 'logo' not in request.files:
+            return jsonify({'status': 'error', 'message': 'No file provided.'}), 400
+        file = request.files['logo']
+        if file.filename == '':
+            return jsonify({'status': 'error', 'message': 'No file selected.'}), 400
+
+        # Validate file type
+        allowed = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+        ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+        if ext not in allowed:
+            return jsonify({'status': 'error', 'message': f'Invalid file type: .{ext}. Allowed: {", ".join(allowed)}'}), 400
+
+        # Save to static/uploads/
+        upload_dir = os.path.join('static', 'uploads')
+        if not os.path.exists(upload_dir):
+            os.makedirs(upload_dir)
+
+        from werkzeug.utils import secure_filename
+        safe_name = secure_filename(f'logo_{datetime.now().strftime("%Y%m%d%H%M%S")}.{ext}')
+        file_path = os.path.join(upload_dir, safe_name)
+        file.save(file_path)
+
+        logo_url = f'/static/uploads/{safe_name}'
+        db_manager.save_setting('logo_url', logo_url)
+
+        return jsonify({'status': 'success', 'message': 'Logo uploaded.', 'logo_url': logo_url})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/upload_font', methods=['POST'])
+@require_admin
+def upload_font():
+    try:
+        if 'font' not in request.files:
+            return jsonify({'status': 'error', 'message': 'No file provided.'}), 400
+        file = request.files['font']
+        if file.filename == '':
+            return jsonify({'status': 'error', 'message': 'No file selected.'}), 400
+
+        allowed = {'ttf', 'woff', 'woff2', 'otf'}
+        ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+        if ext not in allowed:
+            return jsonify({'status': 'error', 'message': f'Invalid font type: .{ext}. Allowed: {", ".join(allowed)}'}), 400
+
+        font_dir = os.path.join('static', 'uploads', 'fonts')
+        if not os.path.exists(font_dir):
+            os.makedirs(font_dir)
+
+        from werkzeug.utils import secure_filename
+        safe_name = secure_filename(f'custom_font_{datetime.now().strftime("%Y%m%d%H%M%S")}.{ext}')
+        file_path = os.path.join(font_dir, safe_name)
+        file.save(file_path)
+
+        font_url = f'/static/uploads/fonts/{safe_name}'
+        db_manager.save_setting('custom_font_url', font_url)
+        db_manager.save_setting('custom_font_format', ext)
+
+        return jsonify({'status': 'success', 'message': 'Font uploaded!', 'font_url': font_url})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/remove_font', methods=['POST'])
+@require_admin
+def remove_font():
+    try:
+        current_font = db_manager.get_setting('custom_font_url', '')
+        if current_font:
+            file_path = os.path.join('static', 'uploads', 'fonts', os.path.basename(current_font))
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        db_manager.save_setting('custom_font_url', '')
+        db_manager.save_setting('custom_font_format', '')
+        return jsonify({'status': 'success', 'message': 'Custom font removed.'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/upload_title_bg', methods=['POST'])
+@require_admin
+def upload_title_bg():
+    try:
+        if request.is_json and request.json.get('remove'):
+            current = db_manager.get_setting('title_bg_url', '')
+            if current:
+                fp = os.path.join('static', 'uploads', os.path.basename(current))
+                if os.path.exists(fp): os.remove(fp)
+            db_manager.save_setting('title_bg_url', '')
+            return jsonify({'status': 'success', 'message': 'Background removed.'})
+
+        if 'image' not in request.files:
+            return jsonify({'status': 'error', 'message': 'No file provided.'}), 400
+        file = request.files['image']
+        if file.filename == '':
+            return jsonify({'status': 'error', 'message': 'No file selected.'}), 400
+
+        allowed = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'}
+        ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+        if ext not in allowed:
+            return jsonify({'status': 'error', 'message': f'Invalid type: .{ext}'}), 400
+
+        upload_dir = os.path.join('static', 'uploads')
+        if not os.path.exists(upload_dir): os.makedirs(upload_dir)
+        from werkzeug.utils import secure_filename
+        safe = secure_filename(f'title_bg_{datetime.now().strftime("%Y%m%d%H%M%S")}.{ext}')
+        fp = os.path.join(upload_dir, safe)
+        file.save(fp)
+        url = f'/static/uploads/{safe}'
+        db_manager.save_setting('title_bg_url', url)
+        return jsonify({'status': 'success', 'message': 'Background uploaded!', 'url': url})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 @app.route('/api/save_settings', methods=['POST'])
@@ -1605,11 +1772,24 @@ def save_settings():
     try:
         data = request.json
         db_manager.save_setting('gsheets_enabled', 'True' if data.get('gsheets_enabled') else 'False')
-        db_manager.save_setting('gsheets_id', data.get('gsheets_id', '').strip())
 
-        if data.get('gsheets_credentials', '').strip():
-            # Use encrypted save - will validate JSON and encrypt
-            db_manager.save_encrypted_setting('gsheets_credentials', data['gsheets_credentials'].strip())
+        if data.get('header_line_1', '').strip():
+            db_manager.save_setting('header_line_1', data['header_line_1'].strip())
+        if data.get('header_line_2', '').strip():
+            db_manager.save_setting('header_line_2', data['header_line_2'].strip())
+        if data.get('header_line_3', '').strip():
+            db_manager.save_setting('header_line_3', data['header_line_3'].strip())
+        if data.get('system_title', '').strip():
+            db_manager.save_setting('system_title', data['system_title'].strip())
+
+        if 'system_title_font' in data:
+            db_manager.save_setting('system_title_font', data['system_title_font'].strip())
+        if 'title_letter_spacing' in data:
+            db_manager.save_setting('title_letter_spacing', data['title_letter_spacing'].strip())
+        if 'title_bg_opacity' in data:
+            db_manager.save_setting('title_bg_opacity', data['title_bg_opacity'].strip())
+        if 'title_glow_enabled' in data:
+            db_manager.save_setting('title_glow_enabled', str(data['title_glow_enabled']))
 
         if data.get('scanner_pin', '').strip():
             db_manager.save_setting('scanner_pin', data['scanner_pin'].strip())
@@ -1623,7 +1803,7 @@ def save_settings():
                 if parsed >= 1:
                     db_manager.save_setting('gsheets_pull_interval', str(parsed))
             except ValueError:
-                pass  # silently ignore invalid values
+                pass
 
         return jsonify({'status': 'success', 'message': 'Settings saved!'})
     except ValueError as ve:
@@ -1668,6 +1848,11 @@ def gsheet_status():
         return jsonify(result)
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/api/gsheets_last_pull', methods=['GET'])
+def gsheets_last_pull():
+    return jsonify(db_manager.get_last_pull_info())
 
 
 @app.route('/api/bulk_sync', methods=['POST'])
@@ -1774,24 +1959,210 @@ def migrate_master_to_gsheets():
 # ─────────────────────────────────────────────
 @app.route('/api/dashboard_stats', methods=['GET'])
 def dashboard_stats():
-    """Return dashboard statistics: unique barcodes and total employees under tracking."""
+    """Return dashboard statistics. Query params:
+       doc_type — filter by document type
+       count_mode — 'schools' (default, 1 per school+doc_type) or 'rows' (per employee record)"""
     try:
+        doc_type_filter = request.args.get('doc_type', '').strip()
+        count_mode = request.args.get('count_mode', 'schools').strip()
+        is_schools = count_mode == 'schools'
+
         conn = db_manager.get_db_connection()
-        # Total unique barcodes (codes ever generated)
-        unique_barcodes = conn.execute("SELECT COUNT(DISTINCT code) FROM routing_records").fetchone()[0]
-        # Total employees under tracking (total routing records = employees assigned to all scanned codes)
-        total_employees = conn.execute("SELECT COUNT(*) FROM routing_records").fetchone()[0]
-        # Total unique codes currently being tracked (have at least 1 scan)
-        active_codes = conn.execute("SELECT COUNT(DISTINCT code) FROM routing_records").fetchone()[0]
+
+        # Build common JOIN / WHERE fragments
+        doc_join = " LEFT JOIN code_lookup cl_ ON rr.code = cl_.code"
+        doc_where = ""
+        params = []
+        if doc_type_filter:
+            doc_where = " AND cl_.doc_type = ?"
+            params.append(doc_type_filter)
+
+        # Helper: build COUNT expression for status/doc_type metrics
+        def count_expr(col_prefix):
+            if is_schools:
+                return f"COUNT(DISTINCT rr.school_office || '|' || COALESCE({col_prefix}, ''))"
+            else:
+                return "COUNT(*)"
+
+        # Unique barcodes (from code_lookup)
+        if doc_type_filter:
+            unique_barcodes = conn.execute(
+                "SELECT COUNT(*) FROM code_lookup WHERE doc_type = ?", [doc_type_filter]
+            ).fetchone()[0]
+        else:
+            unique_barcodes = conn.execute("SELECT COUNT(*) FROM code_lookup").fetchone()[0]
+
+        # Total employees
+        total_q = f"SELECT COUNT(*) FROM routing_records rr{doc_join} WHERE 1=1{doc_where}"
+        total_employees = conn.execute(total_q, params).fetchone()[0]
+
+        # Active codes
+        active_q = f"SELECT COUNT(DISTINCT rr.code) FROM routing_records rr{doc_join} WHERE 1=1{doc_where}"
+        active_codes = conn.execute(active_q, params).fetchone()[0]
+
+        # Released count
+        released_q = f"SELECT {count_expr('cl_.doc_type')} FROM routing_records rr{doc_join} WHERE LOWER(rr.status) = 'released'{doc_where}"
+        released_count = conn.execute(released_q, params).fetchone()[0]
+
+        # For signature count
+        sig_q = f"SELECT {count_expr('cl_.doc_type')} FROM routing_records rr{doc_join} WHERE LOWER(rr.status) = 'for signature'{doc_where}"
+        for_signature_count = conn.execute(sig_q, params).fetchone()[0]
+
+        # With corrections count
+        corr_q = f"SELECT {count_expr('cl_.doc_type')} FROM routing_records rr{doc_join} WHERE LOWER(rr.status) = 'with corrections'{doc_where}"
+        with_corrections_count = conn.execute(corr_q, params).fetchone()[0]
+
+        # Status breakdown
+        status_breakdown = []
+        if is_schools:
+            status_q = f"""
+                SELECT LOWER(rr.status) as status,
+                       COUNT(DISTINCT rr.school_office || '|' || COALESCE(cl_.doc_type, '')) as cnt
+                FROM routing_records rr{doc_join}
+                WHERE 1=1{doc_where}
+                GROUP BY LOWER(rr.status)
+            """
+        else:
+            status_q = f"""
+                SELECT LOWER(rr.status) as status, COUNT(*) as cnt
+                FROM routing_records rr{doc_join}
+                WHERE 1=1{doc_where}
+                GROUP BY LOWER(rr.status)
+            """
+        rows = conn.execute(status_q, params).fetchall()
+        for row in rows:
+            status_breakdown.append({'status': row['status'], 'count': row['cnt']})
+
+        # Doc type breakdown
+        if is_schools:
+            dt_q = f"""
+                SELECT COALESCE(cl_.doc_type, '') as doc_type,
+                       COUNT(DISTINCT rr.school_office || '|' || COALESCE(cl_.doc_type, '')) as cnt
+                FROM routing_records rr{doc_join}
+                WHERE 1=1{doc_where}
+                GROUP BY cl_.doc_type
+                ORDER BY cnt DESC LIMIT 10
+            """
+        else:
+            dt_q = f"""
+                SELECT COALESCE(cl_.doc_type, '') as doc_type, COUNT(*) as cnt
+                FROM routing_records rr{doc_join}
+                WHERE 1=1{doc_where}
+                GROUP BY cl_.doc_type
+                ORDER BY cnt DESC LIMIT 10
+            """
+        doc_type_breakdown = []
+        rows = conn.execute(dt_q, params).fetchall()
+        for row in rows:
+            label = row['doc_type'] if row['doc_type'] else '(not set)'
+            doc_type_breakdown.append({'label': label, 'count': row['cnt']})
+
         conn.close()
         return jsonify({
             'status': 'success',
             'unique_barcodes': unique_barcodes,
             'total_employees': total_employees,
-            'active_codes': active_codes
+            'active_codes': active_codes,
+            'released_count': released_count,
+            'for_signature_count': for_signature_count,
+            'with_corrections_count': with_corrections_count,
+            'status_breakdown': status_breakdown,
+            'doc_type_breakdown': doc_type_breakdown
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# ─────────────────────────────────────────────
+#  RECENT ACTIVITY
+# ─────────────────────────────────────────────
+@app.route('/api/recent_activity', methods=['GET'])
+def recent_activity():
+    """Return the 10 most recently scanned codes with employee count and latest office.
+    Query params: doc_type — filter by document type, count_mode — 'rows' or 'schools'."""
+    try:
+        doc_type_filter = request.args.get('doc_type', '').strip()
+        count_mode = request.args.get('count_mode', 'rows').strip()
+        is_schools = count_mode == 'schools'
+        conn = db_manager.get_db_connection()
+        subqueries = []
+        for i in range(1, 11):
+            subqueries.append(
+                f"SELECT rr.code, rr.employee, rr.school_office AS origin_school, "
+                f"rr.receiving_office_{i} AS office, "
+                f"rr.timestamp_{i} AS ts "
+                f"FROM routing_records rr "
+                f"WHERE rr.receiving_office_{i} IS NOT NULL AND rr.receiving_office_{i} != ''"
+            )
+        union_sql = " UNION ALL ".join(subqueries)
+        params = []
+        doc_where = ""
+        if doc_type_filter:
+            doc_where = " AND cl.doc_type = ?"
+            params.append(doc_type_filter)
+        if is_schools:
+            group_sql = (
+                f"SELECT scans.origin_school, "
+                f"cl.doc_type, "
+                f"COUNT(DISTINCT scans.code) AS total_codes, "
+                f"MIN(scans.employee) AS first_employee, "
+                f"COUNT(DISTINCT scans.employee) AS total_employees, "
+                f"MAX(scans.office) AS office, "
+                f"MAX(scans.ts) AS last_timestamp "
+                f"FROM ({union_sql}) AS scans "
+                f"JOIN code_lookup cl ON scans.code = cl.code "
+                f"WHERE 1=1{doc_where} "
+                f"GROUP BY scans.origin_school, cl.doc_type "
+                f"ORDER BY last_timestamp DESC LIMIT 10"
+            )
+        else:
+            group_sql = (
+                f"SELECT scans.code, "
+                f"MIN(scans.employee) AS first_employee, "
+                f"COUNT(DISTINCT scans.employee) AS total_employees, "
+                f"MIN(scans.origin_school) AS origin_school, "
+                f"MAX(scans.office) AS office, "
+                f"MAX(scans.ts) AS last_timestamp "
+                f"FROM ({union_sql}) AS scans "
+                f"JOIN code_lookup cl ON scans.code = cl.code "
+                f"WHERE 1=1{doc_where} "
+                f"GROUP BY scans.code "
+                f"ORDER BY last_timestamp DESC LIMIT 10"
+            )
+        rows = conn.execute(group_sql, params).fetchall()
+        activities = []
+        for row in rows:
+            if is_schools:
+                school = row['origin_school'] or ''
+                dt = row['doc_type'] or ''
+                group_label = (school + ' \\u2013 ' + dt) if dt else school
+                activities.append({
+                    'code': '',
+                    'group_label': group_label,
+                    'doc_type': dt,
+                    'total_codes': row['total_codes'],
+                    'first_employee': row['first_employee'] or '',
+                    'total_employees': row['total_employees'],
+                    'origin_school': school,
+                    'office': row['office'] or '',
+                    'last_timestamp': row['last_timestamp'] or ''
+                })
+            else:
+                activities.append({
+                    'code': row['code'],
+                    'group_label': '',
+                    'doc_type': '',
+                    'total_codes': 1,
+                    'first_employee': row['first_employee'] or '',
+                    'total_employees': row['total_employees'],
+                    'origin_school': row['origin_school'] or '',
+                    'office': row['office'] or '',
+                    'last_timestamp': row['last_timestamp'] or ''
+                })
+        conn.close()
+        return jsonify({'status': 'success', 'activities': activities})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 
 # ── Forgot Password ──
 @app.route('/api/forgot_password', methods=['POST'])

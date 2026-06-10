@@ -3,33 +3,55 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Enterprise Barcode Routing Scanner</title>
+    <title>Document Tracking Scanner</title>
+    <link rel="icon" type="image/png" href="/static/uploads/sdo_manila_logo.png">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <style>
         :root {
             --primary: #6366f1;
             --primary-hover: #4f46e5;
-            --secondary: #a855f7;
-            --accent: #ec4899;
+            --secondary: #818cf8;
+            --torquoise: #14b8a6;
             --success: #10b981;
             --warning: #f59e0b;
             --error: #ef4444;
             --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
-            --glass-bg: rgba(30, 41, 59, 0.7);
+            --glass-bg: rgba(30, 41, 59, 0.65);
             --glass-border: rgba(255, 255, 255, 0.08);
             --text-main: #f8fafc;
             --text-muted: #94a3b8;
             --radius-lg: 20px;
             --radius-md: 12px;
+            --radius-sm: 8px;
             --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            --btn-transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            --toast-success: #10b981;
+            --toast-error: #ef4444;
+            --toast-warning: #f59e0b;
+            --toast-info: #6366f1;
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        body.light-mode {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --secondary: #3b82f6;
+            --success: #059669;
+            --warning: #d97706;
+            --error: #dc2626;
+            --bg-gradient: linear-gradient(135deg, #ffffff 0%, #f0f9ff 50%, #ffffff 100%);
+            --glass-bg: rgba(255, 255, 255, 0.8);
+            --glass-border: rgba(0, 0, 0, 0.06);
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.05);
+            --toast-success: #10b981;
+            --toast-error: #ef4444;
+            --toast-warning: #f59e0b;
+            --toast-info: #6366f1;
         }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: 'Outfit', sans-serif;
@@ -42,10 +64,7 @@
 
         .background-glows {
             position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
+            top: 0; left: 0; right: 0; bottom: 0;
             z-index: -1;
             overflow: hidden;
             pointer-events: none;
@@ -60,7 +79,6 @@
             background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, transparent 70%);
             filter: blur(80px);
         }
-
         .glow-2 {
             position: absolute;
             bottom: -20%;
@@ -77,73 +95,166 @@
             padding: 40px 20px;
         }
 
-        /* HEADER */
+        /* ═══ TOAST CONTAINER ═══ */
+        #toastContainer {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 99999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            pointer-events: none;
+            max-width: 420px;
+            width: 100%;
+        }
+
+        .toast {
+            pointer-events: auto;
+            background: var(--glass-bg);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--glass-border);
+            border-left: 4px solid var(--toast-info);
+            border-radius: var(--radius-md);
+            padding: 16px 20px;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+            animation: toastSlideIn 0.4s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+            position: relative;
+            overflow: hidden;
+            min-width: 320px;
+        }
+        body.light-mode .toast {
+            background: rgba(255,255,255,0.95);
+            border: 1px solid rgba(0,0,0,0.08);
+            border-left-width: 4px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.1);
+        }
+
+        .toast-icon { flex-shrink: 0; font-size: 1.3rem; margin-top: 1px; }
+        .toast-body { flex: 1; min-width: 0; }
+        .toast-title { font-weight: 700; font-size: 0.9rem; margin-bottom: 2px; }
+        .toast-message { font-size: 0.82rem; color: var(--text-muted); line-height: 1.4; }
+        .toast-close {
+            flex-shrink: 0;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 1rem;
+            padding: 2px 4px;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+        .toast-close:hover { opacity: 1; }
+        .toast-progress {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            height: 3px;
+            background: var(--toast-info);
+            border-radius: 0 2px 2px 0;
+            animation: toastProgress 4s linear forwards;
+        }
+
+        .toast.toast-success { border-left-color: var(--toast-success); }
+        .toast.toast-error { border-left-color: var(--toast-error); }
+        .toast.toast-warning { border-left-color: var(--toast-warning); }
+        .toast.toast-info { border-left-color: var(--toast-info); }
+        .toast.toast-success .toast-progress { background: var(--toast-success); }
+        .toast.toast-error .toast-progress { background: var(--toast-error); }
+        .toast.toast-warning .toast-progress { background: var(--toast-warning); }
+        .toast.toast-info .toast-progress { background: var(--toast-info); }
+        .toast.toast-success .toast-title { color: var(--toast-success); }
+        .toast.toast-error .toast-title { color: var(--toast-error); }
+        .toast.toast-warning .toast-title { color: var(--toast-warning); }
+        .toast.toast-info .toast-title { color: var(--toast-info); }
+        .toast.toast-out { animation: toastSlideOut 0.3s ease forwards; }
+
+        @keyframes toastSlideIn {
+            from { transform: translateX(120%) scale(0.9); opacity: 0; }
+            to { transform: translateX(0) scale(1); opacity: 1; }
+        }
+        @keyframes toastSlideOut {
+            from { transform: translateX(0) scale(1); opacity: 1; }
+            to { transform: translateX(120%) scale(0.9); opacity: 0; }
+        }
+        @keyframes toastProgress { from { width: 100%; } to { width: 0%; } }
+
         header {
             text-align: center;
             margin-bottom: 30px;
         }
 
         h1 {
-            font-size: 2.5rem;
+            font-size: 2rem;
             font-weight: 800;
-            background: linear-gradient(to right, #ffffff, #c084fc, #818cf8);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            color: var(--text-main);
             margin-bottom: 8px;
             letter-spacing: -0.02em;
         }
-
         .subtitle {
             color: var(--text-muted);
             font-size: 1rem;
         }
 
-        /* NAVIGATION BUTTONS */
-        .nav-center {
-            text-align: center;
-            margin-bottom: 25px;
-        }
-
+        .nav-center { text-align: center; margin-bottom: 25px; }
         .nav-btn {
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            background: rgba(255, 255, 255, 0.05);
+            background: var(--glass-bg);
             border: 1px solid var(--glass-border);
-            color: var(--text-main);
-            padding: 12px 28px;
-            border-radius: 30px;
+            color: var(--text-muted);
+            padding: 10px 20px;
+            border-radius: 11px;
             text-decoration: none;
             font-weight: 600;
-            transition: all 0.3s ease;
-            backdrop-filter: blur(10px);
+            font-size: 0.85rem;
+            transition: var(--btn-transition);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
         }
-
+        .nav-btn svg {
+            width: 16px;
+            height: 16px;
+            stroke: currentColor;
+            stroke-width: 2;
+            fill: none;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
         .nav-btn:hover {
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+            background: var(--primary);
+            color: white;
+            box-shadow: 0 4px 16px rgba(99, 102, 241, 0.3);
         }
 
-        /* CARD STYLE */
         .glass-card {
             background: var(--glass-bg);
             border: 1px solid var(--glass-border);
             border-radius: var(--radius-lg);
             padding: 30px;
             box-shadow: var(--shadow);
-            backdrop-filter: blur(20px);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
             margin-bottom: 25px;
             position: relative;
             overflow: hidden;
+            transition: box-shadow 0.3s ease;
         }
-
+        body.light-mode .glass-card {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+        }
         .glass-card::before {
             content: '';
             position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
+            top: 0; left: 0; right: 0;
             height: 1px;
             background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.15), transparent);
         }
@@ -151,71 +262,61 @@
         .card-header {
             display: flex;
             align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-            gap: 15px;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--glass-border);
+            gap: 12px;
         }
-
         .card-icon {
-            width: 44px;
-            height: 44px;
-            background: rgba(99, 102, 241, 0.15);
-            border: 1px solid rgba(99, 102, 241, 0.2);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
+            width: 34px;
+            height: 34px;
+            background: rgba(99, 102, 241, 0.12);
+            border: 1px solid rgba(99, 102, 241, 0.15);
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 15px;
             color: var(--primary);
         }
+        .card-title { font-size: 1.1rem; color: var(--text-main); font-weight: 700; }
 
-        .card-title {
-            font-size: 1.3rem;
-            color: var(--text-main);
-            font-weight: 700;
-        }
-
-        /* TABS */
         .tab-buttons {
             display: flex;
             gap: 10px;
             margin-bottom: 25px;
         }
-
         .tab-btn {
             flex: 1;
-            padding: 15px;
+            padding: 14px;
             border: 1px solid var(--glass-border);
             border-radius: var(--radius-md);
             cursor: pointer;
-            font-size: 1rem;
+            font-size: 0.95rem;
             font-weight: 600;
             background: rgba(255, 255, 255, 0.02);
             color: var(--text-muted);
-            transition: all 0.3s ease;
+            transition: var(--btn-transition);
+            transform: scale(1);
         }
-
         .tab-btn.active {
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            background: var(--primary);
             color: white;
             border-color: transparent;
             box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
         }
-
+        body.light-mode .tab-btn.active { color: #ffffff; }
         .tab-btn:hover:not(.active) {
-            background: rgba(255, 255, 255, 0.05);
+            background: rgba(255, 255, 255, 0.08);
             color: var(--text-main);
+            transform: scale(1.02);
+        }
+        .tab-btn:active {
+            transform: scale(0.96);
+            transition-duration: 0.1s;
         }
 
-        /* SCANNER CONTAINER */
-        .scanner-container {
-            display: none;
-        }
-        
-        .scanner-container.active {
-            display: block;
-        }
+        .scanner-container { display: none; }
+        .scanner-container.active { display: block; animation: tabFadeSlide 0.35s ease-out; }
+        @keyframes tabFadeSlide { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
         .scanner-box {
             background: rgba(15, 23, 42, 0.5);
@@ -224,13 +325,7 @@
             padding: 25px;
             text-align: center;
         }
-
-        .scanner-box h3 {
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin-bottom: 15px;
-            color: var(--text-main);
-        }
+        .scanner-box h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: 15px; color: var(--text-main); }
 
         #reader {
             width: 100%;
@@ -263,20 +358,15 @@
             transition: all 0.3s ease;
             margin-bottom: 15px;
         }
-
         #barcodeInput:focus {
             border-color: var(--primary);
             box-shadow: 0 0 20px rgba(99, 102, 241, 0.35);
         }
 
-        .hint {
-            color: var(--text-muted);
-            font-size: 0.85rem;
-        }
+        .hint { color: var(--text-muted); font-size: 0.85rem; }
 
-        /* BUTTONS */
         .btn {
-            padding: 15px 28px;
+            padding: 14px 26px;
             border: none;
             border-radius: var(--radius-md);
             cursor: pointer;
@@ -286,30 +376,48 @@
             align-items: center;
             justify-content: center;
             gap: 10px;
-            transition: all 0.3s ease;
+            transition: var(--btn-transition);
             width: 100%;
+            transform: scale(1);
+            position: relative;
+            overflow: hidden;
         }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.25);
+        }
+        .btn:active {
+            transform: scale(0.97);
+            transition-duration: 0.08s;
+        }
+
+        /* Ripple effect */
+        .btn::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle, rgba(255,255,255,0.3) 0%, transparent 70%);
+            transform: scale(0);
+            opacity: 0;
+            border-radius: inherit;
+            transition: transform 0.5s ease-out, opacity 0.3s;
+        }
+        .btn:active::after { transform: scale(2.5); opacity: 1; }
 
         .btn-start {
-            background: linear-gradient(135deg, var(--success), #059669);
+            background: linear-gradient(135deg, var(--success) 0%, #34d399 100%);
             color: white;
-            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.25);
+            box-shadow: 0 2px 8px rgba(20, 184, 166, 0.25);
         }
-        .btn-start:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
-        }
+        .btn-start:hover { box-shadow: 0 6px 24px rgba(20, 184, 166, 0.5); }
 
         .btn-stop {
-            background: linear-gradient(135deg, var(--error), #dc2626);
+            background: linear-gradient(135deg, var(--error) 0%, #f87171 100%);
             color: white;
-            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.25);
+            box-shadow: 0 4px 15px rgba(30, 64, 175, 0.2);
             display: none;
         }
-        .btn-stop:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
-        }
+        .btn-stop:hover { box-shadow: 0 6px 24px rgba(30, 64, 175, 0.35); }
 
         .btn-clear {
             background: rgba(255, 255, 255, 0.05);
@@ -319,11 +427,15 @@
             padding: 10px 20px;
             font-size: 0.9rem;
         }
-        .btn-clear:hover {
-            background: rgba(255,255,255,0.1);
+        .btn-clear:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.15); }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
         }
 
-        /* STATUS / ALERTS */
         #status_message {
             margin-top: 20px;
             padding: 15px 20px;
@@ -333,95 +445,62 @@
             display: none;
             animation: bounceIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
         }
-
         @keyframes bounceIn {
             0% { transform: scale(0.9); opacity: 0; }
             100% { transform: scale(1); opacity: 1; }
         }
+        #status_message.success { display: block; background: rgba(20, 184, 166, 0.12); border: 1px solid var(--success); color: var(--success); }
+        #status_message.error { display: block; background: rgba(30, 64, 175, 0.08); border: 1px solid var(--error); color: var(--error); }
+        #status_message.warning { display: block; background: rgba(99, 102, 241, 0.12); border: 1px solid var(--warning); color: #818cf8; }
 
-        #status_message.success {
-            display: block;
-            background: rgba(16, 185, 129, 0.15);
-            border: 1px solid var(--success);
-            color: #34d399;
-        }
-
-        #status_message.error {
-            display: block;
-            background: rgba(239, 68, 68, 0.15);
-            border: 1px solid var(--error);
-            color: #f87171;
-        }
-
-        #status_message.warning {
-            display: block;
-            background: rgba(245, 158, 11, 0.15);
-            border: 1px solid var(--warning);
-            color: #fbbf24;
-        }
-
-        /* SEARCHABLE PICKER styling */
         .picker-container {
             margin-bottom: 25px;
             background: rgba(255, 255, 255, 0.02);
             border: 1px solid var(--glass-border);
             border-radius: var(--radius-lg);
-            padding: 25px;
+            padding: 22px;
         }
-
         .picker-container label {
             display: block;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             font-weight: 700;
             color: #a5b4fc;
             text-transform: uppercase;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             letter-spacing: 0.05em;
         }
-
-        .picker-input-wrapper {
-            position: relative;
-        }
-
+        .picker-input-wrapper { position: relative; }
         .picker-input-wrapper input {
             width: 100%;
-            padding: 16px 20px;
+            padding: 14px 18px;
             background: rgba(15, 23, 42, 0.7);
             border: 1px solid var(--glass-border);
             border-radius: var(--radius-md);
             color: var(--text-main);
-            font-size: 1.1rem;
+            font-size: 1rem;
             outline: none;
             transition: all 0.3s ease;
         }
-
         .picker-input-wrapper input:focus {
             border-color: var(--primary);
             box-shadow: 0 0 15px rgba(99, 102, 241, 0.25);
             background: rgba(15, 23, 42, 0.9);
         }
 
-        /* SCANNED LOGS */
         .list-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
         }
-
-        .list-header h2 {
-            font-size: 1.4rem;
-            font-weight: 700;
-            color: var(--success);
-        }
-
+        .list-header h2 { font-size: 1.15rem; font-weight: 700; color: var(--success); }
         .count-badge {
-            background: var(--accent);
+            background: var(--primary);
             color: white;
             padding: 3px 12px;
             border-radius: 20px;
             font-weight: 700;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }
 
         .scanned-list {
@@ -430,99 +509,103 @@
             overflow-y: auto;
             padding-right: 5px;
         }
-
-        .scanned-list::-webkit-scrollbar {
-            width: 6px;
-        }
-        .scanned-list::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
-        }
+        .scanned-list::-webkit-scrollbar { width: 6px; }
+        .scanned-list::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
 
         .scanned-list li {
             background: rgba(255, 255, 255, 0.02);
             border: 1px solid var(--glass-border);
             border-left: 5px solid var(--success);
-            padding: 20px;
-            margin-bottom: 12px;
+            padding: 14px;
+            margin-bottom: 8px;
             border-radius: var(--radius-md);
-            animation: slideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.1);
+            animation: scanSlideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.1);
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
         }
+        .scanned-list li.warning-log { border-left-color: var(--warning); }
+        @keyframes scanSlideIn { from { opacity: 0; transform: translateX(-15px); } to { opacity: 1; transform: translateX(0); } }
 
-        .scanned-list li.warning-log {
-            border-left-color: var(--warning);
-        }
-
-        @keyframes slideIn {
-            from { opacity: 0; transform: translateX(-20px); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-
-        .scan-info-row {
-            margin-bottom: 5px;
-        }
-
-        .scan-info-row strong {
-            color: var(--text-main);
-            font-size: 1.1rem;
-        }
-
-        .scan-doc {
-            color: #a5b4fc;
-            font-weight: 600;
-            font-size: 0.95rem;
-            margin-bottom: 5px;
-        }
-
-        .scan-employees {
-            color: var(--text-muted);
-            font-size: 0.95rem;
-            margin-bottom: 8px;
-            line-height: 1.4;
-        }
-
-        .scan-time {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
-            color: var(--text-muted);
-        }
-
+        .scan-info-row { margin-bottom: 4px; }
+        .scan-info-row strong { color: var(--text-main); font-size: 1rem; }
+        .scan-doc { color: #a5b4fc; font-weight: 600; font-size: 0.9rem; margin-bottom: 4px; }
+        .scan-employees { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 6px; line-height: 1.4; }
+        .scan-time { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; color: var(--text-muted); }
         .scan-badge-pill {
-            background: rgba(16, 185, 129, 0.15);
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            color: var(--success);
-            padding: 3px 10px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            text-transform: uppercase;
+            background: rgba(20, 184, 166, 0.12); border: 1px solid rgba(20, 184, 166, 0.25);
+            color: var(--success); padding: 3px 10px; border-radius: 20px;
+            font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+        }
+        .empty-list { text-align: center; color: var(--text-muted); padding: 40px 0; font-style: italic; }
+
+        /* ═══ SIDE-BY-SIDE SCANNER + LOGS ═══ */
+        .scanner-layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 25px;
+            align-items: start;
+        }
+        .scanner-layout .glass-card { margin-bottom: 0; }
+        .scanner-layout .glass-card .scanned-list { max-height: 520px; }
+        @media (max-width: 900px) {
+            .scanner-layout {
+                grid-template-columns: 1fr;
+            }
         }
 
-        .empty-list {
-            text-align: center;
-            color: var(--text-muted);
-            padding: 40px 0;
-            font-style: italic;
-        }
-
-        .shake {
-            animation: shake 0.3s ease;
-        }
-
+        .shake { animation: shake 0.3s ease; }
         @keyframes shake {
             0%, 100% { transform: translateX(0); }
-            20%, 60% { transform: translateX(-10px); }
-            40%, 80% { transform: translateX(10px); }
+            20%, 60% { transform: translateX(-8px); }
+            40%, 80% { transform: translateX(8px); }
         }
-        /* PIN GATE MODAL */
+
+        .theme-toggle {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 9999;
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 30px;
+            padding: 8px 14px;
+            cursor: pointer;
+            color: var(--text-main);
+            font-size: 0.8rem;
+            font-weight: 600;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: var(--btn-transition);
+            box-shadow: var(--shadow);
+        }
+        .theme-toggle:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 24px rgba(0,0,0,0.3);
+        }
+
+        body.light-mode .nav-btn,
+        body.light-mode .btn-clear,
+        body.light-mode .pin-gate-box { background: rgba(255,255,255,0.85); }
+        body.light-mode #pinGateOverlay { background: rgba(255, 255, 255, 0.98); }
+        body.light-mode .scanner-box,
+        body.light-mode .physical-scanner-box,
+        body.light-mode .picker-container { background: rgba(255, 255, 255, 0.3); }
+        body.light-mode .picker-container input { background: rgba(0,0,0,0.03); color: #000; border-color: rgba(0,0,0,0.12); }
+        body.light-mode .picker-container input:focus { border-color: var(--primary); background: #fff; }
+        body.light-mode #barcodeInput { background: rgba(0,0,0,0.03); color: #000; border-color: rgba(0,0,0,0.12); }
+        body.light-mode #barcodeInput:focus { border-color: var(--primary); }
+        body.light-mode #pinInput { background: rgba(0,0,0,0.03); color: #000; border-color: rgba(0,0,0,0.15); }
+        body.light-mode #pinInput:focus { border-color: var(--primary); }
+
         #pinGateOverlay {
             position: fixed;
             inset: 0;
             background: rgba(9, 11, 26, 0.97);
-            z-index: 9999;
+            z-index: 10000;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -533,20 +616,27 @@
             background: rgba(30, 41, 59, 0.9);
             border: 1px solid rgba(99,102,241,0.3);
             border-radius: 24px;
-            padding: 50px 45px;
+            padding: 45px 40px;
             text-align: center;
             max-width: 420px;
             width: 90%;
             box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-            animation: expand 0.4s cubic-bezier(0.18,0.89,0.32,1.28);
+            animation: gateExpand 0.5s cubic-bezier(0.18,0.89,0.32,1.28);
+            position: relative;
+            overflow: hidden;
         }
-        @keyframes expand {
-            from { transform: scale(0.85); opacity: 0; }
-            to   { transform: scale(1); opacity: 1; }
+        .pin-gate-box::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, var(--primary), var(--torquoise), transparent);
         }
-        .pin-gate-icon { font-size: 3.5rem; margin-bottom: 16px; }
-        .pin-gate-box h2 { font-size: 1.7rem; font-weight: 800; margin-bottom: 6px; }
-        .pin-gate-box p  { color: var(--text-muted); margin-bottom: 28px; }
+        @keyframes gateExpand { from { transform: scale(0.85) translateY(20px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
+        .pin-gate-icon { font-size: 3rem; margin-bottom: 14px; display: block; }
+        .pin-gate-box h2 { font-size: 1.6rem; font-weight: 800; margin-bottom: 6px; }
+        .pin-gate-box p { color: var(--text-muted); margin-bottom: 24px; }
+
         #pinInput {
             width: 100%;
             padding: 16px;
@@ -560,33 +650,30 @@
             font-family: 'JetBrains Mono', monospace;
             margin-bottom: 16px;
             transition: all 0.3s;
+            outline: none;
         }
-        #pinInput:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 20px rgba(99,102,241,0.3); }
-        #pinError {
-            color: var(--error);
-            font-weight: 600;
-            min-height: 22px;
-            margin-bottom: 12px;
-            font-size: 0.9rem;
-        }
+        #pinInput:focus { border-color: var(--primary); box-shadow: 0 0 20px rgba(99,102,241,0.3); }
+        #pinError { color: var(--error); font-weight: 600; min-height: 22px; margin-bottom: 12px; font-size: 0.9rem; }
+
         .btn-pin-submit {
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            background: var(--primary);
             color: white;
             border: none;
             padding: 15px;
             width: 100%;
             border-radius: 12px;
-            font-size: 1.1rem;
+            font-size: 1.05rem;
             font-weight: 700;
             cursor: pointer;
-            transition: all 0.3s;
+            transition: var(--btn-transition);
+            transform: scale(1);
         }
-        .btn-pin-submit:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99,102,241,0.4); }
-        /* RECEIVER PICKER */
+        .btn-pin-submit:hover { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(99,102,241,0.4); }
+
         .receiver-name-wrapper { margin-top: 14px; }
         .receiver-name-wrapper label {
             display: block;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             font-weight: 700;
             color: #a5b4fc;
             text-transform: uppercase;
@@ -597,21 +684,24 @@
 </head>
 <body>
 
-    <!-- ═══════════════ SCANNER LOGIN GATE ═══════════════ -->
+    <!-- ═══ TOAST CONTAINER ═══ -->
+    <div id="toastContainer"></div>
+
+    <!-- ═══ SCANNER LOGIN GATE ═══ -->
     <div id="pinGateOverlay">
         <div class="pin-gate-box">
-            <div class="pin-gate-icon">🔐</div>
+            <span class="pin-gate-icon">🔐</span>
             <h2>Scanner Access</h2>
-            <p style="color:var(--text-muted); margin-bottom:6px;">Login required — <strong style="color:#a5b4fc;">Admin</strong>, <strong style="color:#a5b4fc;">Supervisor</strong>, or <strong style="color:#a5b4fc;">User</strong></p>
+            <p style="color:var(--text-muted); margin-bottom:6px;">Login with your account to scan documents</p>
             <input type="text" id="loginUsername" placeholder="Username" autocomplete="username"
-                   style="width:100%; padding:13px; font-size:1rem; text-align:center; background:rgba(15,23,42,0.8); border:2px solid rgba(99,102,241,0.3); border-radius:12px; color:white; font-family:inherit; margin-bottom:12px; transition:all 0.3s;"
+                   style="width:100%; padding:13px; font-size:1rem; text-align:center; background:rgba(15,23,42,0.8); border:2px solid rgba(99,102,241,0.3); border-radius:12px; color:white; font-family:inherit; margin-bottom:12px; transition:all 0.3s; outline:none;"
                    onkeypress="if(event.key==='Enter') document.getElementById('loginPassword').focus()">
             <input type="password" id="loginPassword" placeholder="Passkey" autocomplete="current-password"
-                   style="width:100%; padding:13px; font-size:1rem; letter-spacing:0.2em; text-align:center; background:rgba(15,23,42,0.8); border:2px solid rgba(99,102,241,0.3); border-radius:12px; color:white; font-family:'JetBrains Mono',monospace; margin-bottom:16px; transition:all 0.3s;"
+                   style="width:100%; padding:13px; font-size:1rem; letter-spacing:0.2em; text-align:center; background:rgba(15,23,42,0.8); border:2px solid rgba(99,102,241,0.3); border-radius:12px; color:white; font-family:'JetBrains Mono',monospace; margin-bottom:16px; transition:all 0.3s; outline:none;"
                    onkeypress="if(event.key==='Enter') submitScannerLogin()">
             <div id="pinError"></div>
             <button class="btn-pin-submit" onclick="submitScannerLogin()">🔓 Unlock Scanner</button>
-            <p style="margin-top:18px; font-size:0.82rem; color:var(--text-muted);">Forgot passkey? Contact your <strong>Admin</strong> for a reset.</p>
+            <p style="margin-top:16px; font-size:0.82rem; color:var(--text-muted);">Forgot passkey? Contact your <strong>Admin</strong> for a reset.</p>
         </div>
     </div>
 
@@ -620,10 +710,15 @@
         <div class="glow-2"></div>
     </div>
 
+    <button class="theme-toggle no-print" id="themeToggle" onclick="toggleTheme()" title="Toggle light/dark mode">
+        <span id="themeIcon">☾</span>
+        <span id="themeLabel">Dark</span>
+    </button>
+
     <div class="container" id="scannerContent" style="display:none;">
         <header>
-            <h1>📷 Barcode &amp; QR Routing Scanner</h1>
-            <p class="subtitle">Assign receiving offices and route documents in real time</p>
+            <h1>Document Scanner</h1>
+            <p class="subtitle">Scan barcodes and track document routing in real time</p>
             <div id="scannerUserBadge" style="margin-top:10px; display:inline-flex; align-items:center; gap:10px; background:rgba(99,102,241,0.15); border:1px solid rgba(99,102,241,0.3); border-radius:30px; padding:6px 16px; font-size:0.9rem;">
                 <span>👤 <span id="scannerUsername"></span> &nbsp;·&nbsp; <span id="scannerRole" style="color:#a5b4fc; font-weight:700;"></span></span>
                 <button onclick="scannerLogout()" style="background:rgba(239,68,68,0.2); border:1px solid rgba(239,68,68,0.3); color:#f87171; border-radius:20px; padding:3px 12px; cursor:pointer; font-size:0.8rem; font-weight:600;">Logout</button>
@@ -631,10 +726,12 @@
         </header>
 
         <div class="nav-center">
-            <a href="/" class="nav-btn">← Back to Dashboard Generator</a>
+            <a href="/" class="nav-btn">
+                <svg viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                Back to Dashboard
+            </a>
         </div>
 
-        <!-- SEARCHABLE OFFICE + RECEIVER PICKER -->
         <div class="picker-container" id="officePickerCard">
             <label for="receivingOffice">📍 Current Receiving Office</label>
             <div class="picker-input-wrapper">
@@ -654,64 +751,131 @@
             <small style="color:var(--text-muted); display:block; margin-top:8px;">💡 Receiver name is optional — useful to track the exact person who signs for the document.</small>
         </div>
 
-        <!-- SCANNERS -->
-        <div class="glass-card">
-            <div class="card-header">
-                <div class="card-icon">📸</div>
-                <h2 class="card-title">Scanning Mechanism</h2>
-            </div>
-
-            <div class="tab-buttons">
-                <button class="tab-btn active" id="tab-camera" onclick="showTab('camera')">📷 Integrated Camera Scanner</button>
-                <button class="tab-btn" id="tab-physical" onclick="showTab('physical')">🔫 USB / Laser POS Scanner</button>
-            </div>
-
-            <!-- Integrated Camera -->
-            <div id="cameraScanner" class="scanner-container active">
-                <div class="scanner-box">
-                    <h3>Point Camera at a Document Barcode or QR Code</h3>
-                    <div id="reader"></div>
-                    <div style="margin-top:20px;">
-                        <button id="startBtn" class="btn btn-start" onclick="startScanner()">📷 Activate Camera Feed</button>
-                        <button id="stopBtn" class="btn btn-stop" onclick="stopScanner()">⏹ Deactivate Camera Feed</button>
+        <div class="scanner-layout">
+            <div class="glass-card">
+                <div class="card-header">
+                    <div class="card-icon">📸</div>
+                    <h2 class="card-title">Scanning Mechanism</h2>
+                </div>
+                <div class="tab-buttons">
+                    <button class="tab-btn active" id="tab-camera" onclick="showTab('camera')">📷 Camera</button>
+                    <button class="tab-btn" id="tab-physical" onclick="showTab('physical')">🔫 USB / POS</button>
+                </div>
+                <div id="cameraScanner" class="scanner-container active">
+                    <div class="scanner-box">
+                        <h3>Point Camera at a Document Barcode or QR Code</h3>
+                        <div id="reader"></div>
+                        <div style="margin-top:20px;">
+                            <button id="startBtn" class="btn btn-start" onclick="startScanner()">📷 Activate Camera Feed</button>
+                            <button id="stopBtn" class="btn btn-stop" onclick="stopScanner()">⏹ Deactivate Camera Feed</button>
+                        </div>
                     </div>
                 </div>
-            </div>
-
-            <!-- Physical Scanner -->
-            <div id="physicalScanner" class="scanner-container">
-                <div class="physical-scanner-box">
-                    <h3>🔫 Physical Laser / USB Barcode Scanner</h3>
-                    <p style="color:var(--text-muted); margin-bottom:20px;">Make sure your hardware scanner is connected. Select the box below, then scan.</p>
-                    <input type="text" id="barcodeInput" placeholder="Click here and scan..." autocomplete="off">
-                    <p class="hint">💡 Pos physical scanners will automatically type the code and press Enter.</p>
+                <div id="physicalScanner" class="scanner-container">
+                    <div class="physical-scanner-box">
+                        <h3>🔫 Physical Laser / USB Barcode Scanner</h3>
+                        <p style="color:var(--text-muted); margin-bottom:20px;">Make sure your hardware scanner is connected. Select the box below, then scan.</p>
+                        <input type="text" id="barcodeInput" placeholder="Click here and scan..." autocomplete="off">
+                        <p class="hint">💡 POS physical scanners will automatically type the code and press Enter.</p>
+                    </div>
                 </div>
+                <div id="status_message"></div>
             </div>
 
-            <div id="status_message"></div>
-        </div>
-
-        <!-- SCANNED LOGS -->
-        <div class="glass-card">
-            <div class="list-header">
-                <h2>✅ Logs Recorded This Session</h2>
-                <span id="total_count" class="count-badge">0</span>
+            <div class="glass-card">
+                <div class="list-header">
+                    <h2>✅ Logs Recorded This Session</h2>
+                    <span id="total_count" class="count-badge">0</span>
+                </div>
+                <button class="btn btn-clear" onclick="clearSessionLogs()" style="margin-bottom:18px;">🗑️ Clear Session Log</button>
+                <ul id="scanned_list" class="scanned-list">
+                    <li class="empty-list">No scans tracked in this browser session. Select a receiving office and start scanning!</li>
+                </ul>
             </div>
-
-            <button class="btn btn-clear" onclick="clearSessionLogs()" style="margin-bottom:20px;">🗑️ Clear Session Log</button>
-            
-            <ul id="scanned_list" class="scanned-list">
-                <li class="empty-list">No scans tracked in this browser session. Select a receiving office and start scanning!</li>
-            </ul>
         </div>
-    </div> <!-- end scannerContent -->
+    </div>
 
     <script>
         let html5QrcodeScanner;
         let sessionLogs = [];
-        let recentScans = {}; // 5-second frontend rapid-trigger protection
+        let recentScans = {};
 
-        // ── LOGIN GATE ──────────────────────────────────────────────────────────
+        // ═══ TOAST NOTIFICATION SYSTEM ═══
+        function showToast(type, message, title) {
+            if (!title) {
+                var titles = { success: 'Success', error: 'Error', warning: 'Warning', info: 'Info' };
+                title = titles[type] || 'Info';
+            }
+            var icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+            var icon = icons[type] || 'ℹ️';
+            
+            var container = document.getElementById('toastContainer');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'toastContainer';
+                container.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:99999;display:flex;flex-direction:column;gap:10px;pointer-events:none;max-width:420px;width:100%;';
+                document.body.appendChild(container);
+            }
+            
+            var toast = document.createElement('div');
+            toast.className = 'toast toast-' + type;
+            toast.innerHTML = '<span class="toast-icon">' + icon + '</span>' +
+                '<div class="toast-body">' +
+                    '<div class="toast-title">' + title + '</div>' +
+                    '<div class="toast-message">' + message + '</div>' +
+                '</div>' +
+                '<button class="toast-close" onclick="dismissToast(this.parentElement)">✕</button>' +
+                '<div class="toast-progress"></div>';
+            
+            container.appendChild(toast);
+            
+            var timeout = setTimeout(function() { dismissToast(toast); }, 4500);
+            
+            toast.addEventListener('mouseenter', function() {
+                clearTimeout(timeout);
+                var progress = toast.querySelector('.toast-progress');
+                if (progress) progress.style.animationPlayState = 'paused';
+            });
+            toast.addEventListener('mouseleave', function() {
+                var progress = toast.querySelector('.toast-progress');
+                if (progress) {
+                    progress.style.animationPlayState = 'running';
+                    var remaining = parseFloat(getComputedStyle(progress).width) / parseFloat(progress.parentElement.offsetWidth) * 4500;
+                    timeout = setTimeout(function() { dismissToast(toast); }, Math.max(remaining, 500));
+                } else {
+                    timeout = setTimeout(function() { dismissToast(toast); }, 2000);
+                }
+            });
+        }
+
+        function dismissToast(toast) {
+            if (toast.classList.contains('toast-out')) return;
+            toast.classList.add('toast-out');
+            setTimeout(function() { if (toast.parentElement) toast.remove(); }, 300);
+        }
+
+        // Replace native alert with toast
+        window.alert = function(message) { showToast('info', message); };
+
+        // ── THEME TOGGLE ──
+        function toggleTheme() {
+            var body = document.body;
+            var isLight = body.classList.toggle('light-mode');
+            document.getElementById('themeIcon').textContent = isLight ? '☀' : '☾';
+            document.getElementById('themeLabel').textContent = isLight ? 'Light' : 'Dark';
+            localStorage.setItem('scanner_theme', isLight ? 'light' : 'dark');
+        }
+
+        function loadTheme() {
+            var saved = localStorage.getItem('scanner_theme');
+            if (saved === 'light') {
+                document.body.classList.add('light-mode');
+                document.getElementById('themeIcon').textContent = '☀';
+                document.getElementById('themeLabel').textContent = 'Light';
+            }
+        }
+
+        // ── LOGIN GATE ──
         function submitScannerLogin() {
             const username = document.getElementById('loginUsername').value.trim();
             const password = document.getElementById('loginPassword').value.trim();
@@ -740,6 +904,8 @@
                     document.getElementById('pinGateOverlay').style.display = 'none';
                     document.getElementById('scannerContent').style.display = 'block';
                     initScanner(data.user.school_office || '', role);
+                    restoreSessionLogs();
+                    showToast('success', 'Welcome, ' + data.user.username + '! Scanner ready.', 'Unlocked');
                 } else {
                     errEl.textContent = data.message || 'Login failed.';
                     const box = document.querySelector('.pin-gate-box');
@@ -762,11 +928,12 @@
                 document.getElementById('loginPassword').value = '';
                 document.getElementById('pinError').textContent = '';
                 stopScanner();
+                showToast('info', 'You have logged out from the scanner.');
             });
         }
 
         window.onload = function() {
-            // Check if already logged in with valid role
+            loadTheme();
             fetch('/api/check_auth')
             .then(r => r.json())
             .then(data => {
@@ -776,12 +943,10 @@
                     document.getElementById('pinGateOverlay').style.display = 'none';
                     document.getElementById('scannerContent').style.display = 'block';
                     initScanner(data.school_office || '', data.role);
+                    restoreSessionLogs();
                 }
-                // Otherwise login gate stays visible
             })
-            .catch(() => {
-                // Server unreachable — keep gate
-            });
+            .catch(() => {});
         };
 
         function initScanner(userSchool, userRole) {
@@ -803,7 +968,6 @@
                 }
             });
 
-            // ── USER ROLE: lock receiving office to assigned school ──
             if (userRole === 'User' && userSchool) {
                 const officeInput = document.getElementById('receivingOffice');
                 officeInput.value = userSchool;
@@ -811,7 +975,6 @@
                 officeInput.style.opacity = '0.6';
                 officeInput.style.cursor = 'not-allowed';
 
-                // Show lock badge above the office picker
                 const pickerCard = document.getElementById('officePickerCard');
                 const existingBadge = document.getElementById('scannerUserLockBadge');
                 if (pickerCard && !existingBadge) {
@@ -821,69 +984,51 @@
                     lockDiv.innerHTML = '🔒 Scanner locked to your assigned office: <strong>' + userSchool + '</strong>';
                     pickerCard.parentNode.insertBefore(lockDiv, pickerCard);
                 }
-
-                // Auto-load receivers for the locked office
                 loadReceiversForOffice();
             }
         }
 
-        // --- WEB AUDIO API CHIMES SYNTHESIS (Zero External File Dependencies) ---
+        // --- WEB AUDIO API CHIMES ---
         function playSuccessChime() {
             try {
                 const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                
                 const osc1 = ctx.createOscillator();
                 const osc2 = ctx.createOscillator();
                 const gain = ctx.createGain();
-                
                 osc1.type = 'sine';
-                osc1.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
-                osc1.frequency.setValueAtTime(880.00, ctx.currentTime + 0.08); // A5
-                
+                osc1.frequency.setValueAtTime(587.33, ctx.currentTime);
+                osc1.frequency.setValueAtTime(880.00, ctx.currentTime + 0.08);
                 osc2.type = 'sine';
-                osc2.frequency.setValueAtTime(1174.66, ctx.currentTime + 0.08); // D6
-                
+                osc2.frequency.setValueAtTime(1174.66, ctx.currentTime + 0.08);
                 gain.gain.setValueAtTime(0.08, ctx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
-                
                 osc1.connect(gain);
                 osc2.connect(gain);
                 gain.connect(ctx.destination);
-                
                 osc1.start();
                 osc2.start();
                 osc1.stop(ctx.currentTime + 0.35);
                 osc2.stop(ctx.currentTime + 0.35);
-            } catch(e) {
-                console.log("Audio synthesis blocked/failed: ", e);
-            }
+            } catch(e) { console.log("Audio synthesis blocked: ", e); }
         }
 
         function playWarningBuzzer() {
             try {
                 const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
-                
                 osc.type = 'sawtooth';
-                osc.frequency.setValueAtTime(130, ctx.currentTime); // Low buzz
+                osc.frequency.setValueAtTime(130, ctx.currentTime);
                 osc.frequency.linearRampToValueAtTime(90, ctx.currentTime + 0.3);
-                
                 gain.gain.setValueAtTime(0.12, ctx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-                
                 osc.connect(gain);
                 gain.connect(ctx.destination);
-                
                 osc.start();
                 osc.stop(ctx.currentTime + 0.3);
-            } catch(e) {
-                console.log("Audio synthesis blocked/failed: ", e);
-            }
+            } catch(e) { console.log("Audio synthesis blocked: ", e); }
         }
 
-        // --- LOAD SEARCHABLE DROPDOWNS ---
         function loadAllSchools() {
             fetch('/api/get_all_schools')
             .then(res => res.json())
@@ -904,9 +1049,7 @@
             const school = document.getElementById('receivingOffice').value.trim();
             const dl = document.getElementById('receiversList');
             dl.innerHTML = '';
-            
             if (!school) return;
-            
             fetch('/api/get_all_school_employees', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -924,7 +1067,6 @@
             });
         }
 
-        // --- NAVIGATION TABS ---
         function showTab(tab) {
             document.getElementById('tab-camera').classList.remove('active');
             document.getElementById('tab-physical').classList.remove('active');
@@ -943,18 +1085,15 @@
             }
         }
 
-        // --- CAMERA INTEGRATED SCANNER CONTROL ---
         function startScanner() {
             const office = document.getElementById('receivingOffice').value.trim();
             if (!office) {
                 shakePicker();
-                alert('Please select or type a Current Receiving Office first!');
+                showToast('error', 'Please select or type a Current Receiving Office first!');
                 return;
             }
-
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'block';
-            
             html5QrcodeScanner = new Html5Qrcode("reader");
             const config = { fps: 12, qrbox: { width: 280, height: 280 } };
             html5QrcodeScanner.start({ facingMode: "environment" }, config, onScanSuccess);
@@ -970,7 +1109,6 @@
                     html5QrcodeScanner = null;
                 })
                 .catch(err => {
-                    console.log("Error deactivating scanner: ", err);
                     document.getElementById('startBtn').style.display = 'block';
                     document.getElementById('stopBtn').style.display = 'none';
                     document.getElementById('reader').innerHTML = "";
@@ -979,11 +1117,8 @@
             }
         }
 
-        function onScanSuccess(decodedText) {
-            processScannedData(decodedText);
-        }
+        function onScanSuccess(decodedText) { processScannedData(decodedText); }
 
-        // --- SCAN PROCESSING ENGINE ---
         function processScannedData(code) {
             code = code.trim().toUpperCase();
             if (!code) return;
@@ -992,60 +1127,48 @@
             if (!office) {
                 shakePicker();
                 playWarningBuzzer();
-                showStatusMessage('error', 'Select or enter a Current Receiving Office first!');
+                showToast('error', 'Select or enter a Current Receiving Office first!');
                 return;
             }
 
-            // FRONTEND ACCIDENTAL RAPID RE-SCAN BLOCK (5-second debounce)
             const now = Date.now();
             if (recentScans[code] && (now - recentScans[code] < 5000)) {
                 console.log("Blocked rapid duplicate scan of code: ", code);
-                return; // Silently ignore rapid duplicate trigger to protect network/DB
+                return;
             }
             recentScans[code] = now;
 
             const receiverName = document.getElementById('receiverName').value.trim();
 
-            // Submit scanning event to server
             fetch('/log_scan', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
-                    scanned_data:     code,
+                    scanned_data: code,
                     receiving_office: office,
-                    receiver_name:    receiverName
+                    receiver_name: receiverName
                 })
             })
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'success') {
                     playSuccessChime();
-                    showStatusMessage('success', data.message);
-                    
-                    // Add details to Session Logs UI
+                    showToast('success', data.message, 'Scan Successful');
                     addSessionLog(data, false);
                 } else if (data.status === 'warning') {
-                    // Accident prevention backend matched
                     playWarningBuzzer();
-                    showStatusMessage('warning', data.message);
-                    
-                    // Add to session list as warning log
-                    addSessionLog({
-                        code: code,
-                        message: data.message,
-                        timestamp: new Date().toLocaleTimeString()
-                    }, true);
-                    
+                    showToast('warning', data.message, 'Duplicate Blocked');
+                    addSessionLog({ code: code, message: data.message, timestamp: new Date().toLocaleTimeString() }, true);
                     shakeInput();
                 } else {
                     playWarningBuzzer();
-                    showStatusMessage('error', data.message);
+                    showToast('error', data.message, 'Scan Failed');
                     shakeInput();
                 }
             })
             .catch(err => {
                 playWarningBuzzer();
-                showStatusMessage('error', 'Network error connecting to Flask server: ' + err);
+                showToast('error', 'Network error connecting to server: ' + err, 'Connection Error');
             });
         }
 
@@ -1057,48 +1180,54 @@
             const li = document.createElement('li');
             if (isWarning) {
                 li.className = 'warning-log';
-                li.innerHTML = `
-                    <div>
-                        <div class="scan-info-row"><strong>⚠️ Accidental Re-Scan Blocked</strong></div>
-                        <div class="scan-doc" style="color:var(--warning);">${data.message}</div>
-                        <div class="scan-time">TIME: ${data.timestamp} | CODE: ${data.code}</div>
-                    </div>
-                `;
+                li.innerHTML = '<div><div class="scan-info-row"><strong>⚠️ Accidental Re-Scan Blocked</strong></div><div class="scan-doc" style="color:var(--warning);">' + data.message + '</div><div class="scan-time">TIME: ' + data.timestamp + ' | CODE: ' + data.code + '</div></div>';
             } else {
-                li.innerHTML = `
-                    <div>
-                        <div class="scan-info-row">
-                            <strong>${data.school}</strong> 
-                            <span class="scan-badge-pill" style="margin-left:10px;">Route Stage ${data.slot}</span>
-                        </div>
-                        <div class="scan-doc">📄 Doc: ${data.doc_type}</div>
-                        <div class="scan-employees">👥 Tracks: ${data.data.join(', ')}</div>
-                        <div class="scan-time">Logged: ${data.timestamp} | Code: ${data.code_display || 'OK'}</div>
-                    </div>
-                `;
+                li.innerHTML = '<div><div class="scan-info-row"><strong>' + data.school + '</strong> <span class="scan-badge-pill" style="margin-left:10px;">Route Stage ' + data.slot + '</span></div><div class="scan-doc">📄 Doc: ' + data.doc_type + '</div><div class="scan-employees">👥 Tracks: ' + data.data.join(', ') + '</div><div class="scan-time">Logged: ' + data.timestamp + ' | Code: ' + (data.code_display || 'OK') + '</div></div>';
             }
-
             ul.insertBefore(li, ul.firstChild);
-            
-            // Increment Count
             sessionLogs.push(data);
             document.getElementById('total_count').innerText = sessionLogs.length;
+            try {
+                if (sessionLogs.length > 100) sessionLogs = sessionLogs.slice(0, 100);
+                localStorage.setItem('scanner_session_logs', JSON.stringify(sessionLogs));
+            } catch(e) {}
+        }
+
+        function restoreSessionLogs() {
+            try {
+                var saved = localStorage.getItem('scanner_session_logs');
+                if (!saved) return;
+                var logs = JSON.parse(saved);
+                if (!Array.isArray(logs) || logs.length === 0) return;
+                sessionLogs = logs;
+                var ul = document.getElementById('scanned_list');
+                ul.innerHTML = '';
+                sessionLogs.forEach(function(d) {
+                    var li = document.createElement('li');
+                    if (d.isWarning) {
+                        li.className = 'warning-log';
+                        li.innerHTML = '<div><div class="scan-info-row"><strong>⚠️ Accidental Re-Scan Blocked</strong></div><div class="scan-doc" style="color:var(--warning);">' + (d.message||'') + '</div><div class="scan-time">TIME: ' + (d.timestamp||'') + ' | CODE: ' + (d.code||'') + '</div></div>';
+                    } else {
+                        var emp = Array.isArray(d.data) ? d.data.join(', ') : (d.data||'');
+                        li.innerHTML = '<div><div class="scan-info-row"><strong>' + (d.school||'') + '</strong> <span class="scan-badge-pill" style="margin-left:10px;">Route Stage ' + (d.slot||'') + '</span></div><div class="scan-doc">📄 Doc: ' + (d.doc_type||'') + '</div><div class="scan-employees">👥 Tracks: ' + emp + '</div><div class="scan-time">Logged: ' + (d.timestamp||'') + ' | Code: ' + (d.code_display||'OK') + '</div></div>';
+                    }
+                    ul.appendChild(li);
+                });
+                document.getElementById('total_count').innerText = sessionLogs.length;
+            } catch(e) {}
         }
 
         function showStatusMessage(type, text) {
+            // Also mirror to toast
+            showToast(type, text);
             const div = document.getElementById('status_message');
             div.className = type;
             div.innerText = (type === 'success' ? '✅ ' : type === 'warning' ? '⚠️ ' : '❌ ') + text;
             div.style.display = 'block';
-            
-            // Auto hide after 8 seconds
             if (window.statusTimeout) clearTimeout(window.statusTimeout);
-            window.statusTimeout = setTimeout(() => {
-                div.style.display = 'none';
-            }, 8000);
+            window.statusTimeout = setTimeout(() => { div.style.display = 'none'; }, 8000);
         }
 
-        // --- SHAKE FEEDBACKS ---
         function shakePicker() {
             const picker = document.getElementById('officePickerCard');
             picker.classList.add('shake');
@@ -1119,6 +1248,8 @@
             const ul = document.getElementById('scanned_list');
             ul.innerHTML = '<li class="empty-list">No scans tracked in this browser session. Select a receiving office and start scanning!</li>';
             document.getElementById('status_message').style.display = 'none';
+            try { localStorage.removeItem('scanner_session_logs'); } catch(e) {}
+            showToast('info', 'Session logs cleared.');
         }
     </script>
 </body>

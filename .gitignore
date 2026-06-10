@@ -35,3 +35,10 @@ static/qr_generated/
 
 # Local backup folder - keep copies on disk but never commit
 backup/
+
+# Local data files
+cookies.txt
+local db/
+test_*.db
+test_*.xlsx
+static/sync_backup_*.json

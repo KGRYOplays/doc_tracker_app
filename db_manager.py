@@ -21,6 +21,19 @@ OLD_LOG_EXCEL = 'scan_log.xlsx'
 # Background Queue for Google Sheets Sync
 gs_sync_queue = queue.Queue()
 
+# Last periodic pull info (for frontend notifications)
+_last_pull_info = {"time": None, "status": "", "message": ""}
+_last_pull_lock = threading.Lock()
+
+def update_last_pull_info(status, message):
+    global _last_pull_info
+    with _last_pull_lock:
+        _last_pull_info = {"time": datetime.now().isoformat(), "status": status, "message": message}
+
+def get_last_pull_info():
+    with _last_pull_lock:
+        return dict(_last_pull_info)
+
 # ─────────────────────────────────────────────
 #  CREDENTIAL ENCRYPTION HELPERS
 # ─────────────────────────────────────────────
@@ -1192,16 +1205,20 @@ def start_periodic_gsheets_pull():
             time.sleep(minutes * 60)
 
             try:
+                update_last_pull_info("syncing", "Refreshing SQLite from Google Sheets...")
                 print(f"[Periodic Pull] Refreshing SQLite from Google Sheets...")
                 count, errors = pull_all_from_gsheets()
                 if errors:
                     for e in errors:
                         print(f"[Periodic Pull] Warning: {e}")
                 if count is not None:
+                    update_last_pull_info("ok", f"Refreshed {count} routing records from Google Sheets.")
                     print(f"[Periodic Pull] OK — {count} routing records refreshed.")
                 else:
+                    update_last_pull_info("ok", "Periodic pull completed.")
                     print(f"[Periodic Pull] OK (no routing records count).")
             except Exception as e:
+                update_last_pull_info("error", f"Periodic pull failed: {e}")
                 print(f"[Periodic Pull] Error: {e}")
                 time.sleep(30)
 
