@@ -1701,12 +1701,13 @@
                             <th>Code</th>
                             <th>Origin School/Office</th>
                             <th>Employees</th>
+                            <th id="recentDocTypeHead" style="display:none;">Doc Type</th>
                             <th>Receiving Office</th>
                             <th>Timestamp</th>
                         </tr>
                     </thead>
                     <tbody id="recentActivityBody">
-                        <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:30px;">Loading activity...</td></tr>
+                        <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:30px;">Loading activity...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -2740,15 +2741,18 @@
         function renderRecentActivity(activities) {
             var tbody = document.getElementById('recentActivityBody');
             var headers = document.querySelectorAll('#recentActivityTable thead tr th');
+            var dtHead = document.getElementById('recentDocTypeHead');
             if (!tbody) return;
+            var isSchools = _dashCountMode === 'schools';
             if (activities.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:30px;">No recent activity</td></tr>';
+                var cols = isSchools ? 6 : 5;
+                tbody.innerHTML = '<tr><td colspan="' + cols + '" style="text-align:center;color:var(--text-muted);padding:30px;">No recent activity</td></tr>';
                 return;
             }
-            var isSchools = _dashCountMode === 'schools';
-            if (headers && headers.length >= 2) {
-                headers[0].textContent = isSchools ? 'School / Doc Type' : 'Code';
+            if (headers && headers.length >= 6) {
+                headers[0].textContent = isSchools ? 'School' : 'Code';
                 headers[1].textContent = isSchools ? 'Codes' : 'Origin School/Office';
+                if (dtHead) dtHead.style.display = isSchools ? '' : 'none';
             }
             tbody.innerHTML = '';
             activities.forEach(function(a) {
@@ -2757,10 +2761,9 @@
                 if (extras > 0) empDisplay += ' AND ' + extras + ' OTHER' + (extras > 1 ? 'S' : '');
                 var tr = document.createElement('tr');
                 if (isSchools) {
-                    var badge = (a.total_codes || 1) > 1 ? ' <span class="code-tag">\u00d7' + a.total_codes + '</span>' : '';
-                    tr.innerHTML = '<td style="text-align:center;"><strong>' + (a.group_label || '') + '</strong>' + badge + '</td><td style="text-align:center;">' + ((a.total_codes || 1) > 1 ? a.total_codes : '1') + '</td><td style="text-align:center;">' + empDisplay + '</td><td style="text-align:center;">' + (a.office || '') + '</td><td class="table-time" style="text-align:center;">' + (a.last_timestamp || '') + '</td>';
+                    tr.innerHTML = '<td style="text-align:center;"><strong>' + (a.origin_school || '') + '</strong></td><td style="text-align:center;">' + ((a.total_codes || 1) > 1 ? a.total_codes : '1') + '</td><td style="text-align:center;">' + empDisplay + '</td><td style="text-align:center;">' + (a.doc_type || '') + '</td><td style="text-align:center;">' + (a.office || '') + '</td><td class="table-time" style="text-align:center;">' + (a.last_timestamp || '') + '</td>';
                 } else {
-                    tr.innerHTML = '<td style="text-align:center;"><span class="code-tag">' + (a.code || '') + '</span></td><td style="text-align:center;">' + (a.origin_school || '') + '</td><td style="text-align:center;">' + empDisplay + '</td><td style="text-align:center;">' + (a.office || '') + '</td><td class="table-time" style="text-align:center;">' + (a.last_timestamp || '') + '</td>';
+                    tr.innerHTML = '<td style="text-align:center;"><span class="code-tag">' + (a.code || '') + '</span></td><td style="text-align:center;">' + (a.origin_school || '') + '</td><td style="text-align:center;">' + empDisplay + '</td><td style="text-align:center;"></td><td style="text-align:center;">' + (a.office || '') + '</td><td class="table-time" style="text-align:center;">' + (a.last_timestamp || '') + '</td>';
                 }
                 tbody.appendChild(tr);
             });
