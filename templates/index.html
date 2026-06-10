@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Document Tracking System</title>
-    <link rel="icon" type="image/png" href="/static/uploads/sdo_manila_logo.png">
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -965,6 +965,7 @@
         }
         select, input, textarea {
             width: 100%;
+            max-width: 600px;
             padding: 12px 16px;
             background: rgba(15, 23, 42, 0.6);
             border: 1px solid var(--glass-border);
@@ -1029,7 +1030,6 @@
             justify-content: center;
             gap: 8px;
             transition: var(--btn-transition);
-            width: 100%;
             text-decoration: none;
             transform: scale(1);
             position: relative;
@@ -1808,9 +1808,9 @@
                     <h2>Barcode Print Sheet Layout (<span id="sheetCount">0</span> codes)</h2>
                 </div>
                 <div class="table-actions no-print">
-                    <button class="btn btn-primary" onclick="printSheet()" style="width:auto;">🖨️ Print Layout Sheet</button>
-                    <button class="btn btn-add-sheet" onclick="batchPrintPDF()" style="width:auto;">📥 Batch Export as PDF (1.5" Labels)</button>
-                    <button class="btn btn-secondary" onclick="clearSheet()" style="width:auto;">🗑️ Clear All Barcodes</button>
+                    <button class="btn btn-primary" onclick="printSheet()">🖨️ Print Layout Sheet</button>
+                    <button class="btn btn-add-sheet" onclick="batchPrintPDF()">📥 Batch Export as PDF (1.5" Labels)</button>
+                    <button class="btn btn-secondary" onclick="clearSheet()">🗑️ Clear All Barcodes</button>
                 </div>
                 <div class="sheet-grid" id="sheetGrid">
                     <div class="empty-list" style="grid-column: span 10; text-align: center; width: 100%;">No barcodes added to print sheet yet.</div>
@@ -1829,10 +1829,10 @@
                     <div class="search-wrapper">
                         <input type="text" id="tableSearch" onkeyup="filterTable()" placeholder="Search employee, office, code, or doc type...">
                     </div>
-                    <button class="btn btn-secondary" onclick="changePage(-1)" style="width:auto; height: 48px;">◀ Previous</button>
+                    <button class="btn btn-secondary" onclick="changePage(-1)" style="height: 48px;">◀ Previous</button>
                     <span id="pageIndicator" style="display:flex; align-items:center; padding:0 15px; font-weight:bold; font-size:0.85rem;">Page 1</span>
-                    <button class="btn btn-secondary" onclick="changePage(1)" style="width:auto; height: 48px;">Next ▶</button>
-                    <button class="btn btn-secondary" id="refreshRecordsBtn" onclick="refreshRecords()" style="width:auto; height: 48px;">🔄 Refresh</button>
+                    <button class="btn btn-secondary" onclick="changePage(1)" style="height: 48px;">Next ▶</button>
+                    <button class="btn btn-secondary" id="refreshRecordsBtn" onclick="refreshRecords()" style="height: 48px;">🔄 Refresh</button>
                 </div>
                 <div id="recordsTableContainer" class="table-container">
                     <table id="recordsTable">
@@ -1874,10 +1874,10 @@
                     <div class="search-wrapper">
                         <input type="text" id="codesSearch" onkeyup="filterCodesTable()" placeholder="Search code, department, school, doc type...">
                     </div>
-                    <button class="btn btn-secondary" onclick="changeCodesPage(-1)" style="width:auto; height: 48px;">◀ Previous</button>
+                    <button class="btn btn-secondary" onclick="changeCodesPage(-1)" style="height: 48px;">◀ Previous</button>
                     <span id="codesPageIndicator" style="display:flex; align-items:center; padding:0 15px; font-weight:bold; font-size:0.85rem;">Page 1</span>
-                    <button class="btn btn-secondary" onclick="changeCodesPage(1)" style="width:auto; height: 48px;">Next ▶</button>
-                    <button class="btn btn-secondary" onclick="loadAllCodes()" style="width:auto; height: 48px;">🔄 Refresh</button>
+                    <button class="btn btn-secondary" onclick="changeCodesPage(1)" style="height: 48px;">Next ▶</button>
+                    <button class="btn btn-secondary" onclick="loadAllCodes()" style="height: 48px;">🔄 Refresh</button>
                 </div>
                 <div style="width:100%; max-width:100%; overflow-x:auto; max-height:70vh; border-radius:var(--radius-md); border:1px solid var(--glass-border); background:rgba(15,23,42,0.4);">
                     <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.75rem;">
@@ -1908,7 +1908,7 @@
                     <h2>User Management</h2>
                 </div>
                 <div class="table-actions no-print">
-                    <button class="btn btn-primary" onclick="loadAdminUsers()" style="width:auto;">🔄 Refresh Users</button>
+                    <button class="btn btn-primary" onclick="loadAdminUsers()">🔄 Refresh Users</button>
                 </div>
                 <table id="adminUsersTable" style="width:100%; margin-top:15px;">
                     <thead>
@@ -1938,8 +1938,8 @@
                     </label>
                 </div>
                 <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:15px;">
-                    <button class="btn btn-secondary" onclick="testSheetConnection()" style="width:auto; padding:10px 20px;">🔌 Test Connection</button>
-                    <button class="btn btn-add-sheet" onclick="bulkSyncSheets()" id="bulkSyncBtn" style="width:auto; padding:10px 20px; margin-bottom:0;">📤 Bulk Sync</button>
+                    <button class="btn btn-secondary" onclick="testSheetConnection()" style="padding:10px 20px;">🔌 Test Connection</button>
+                    <button class="btn btn-add-sheet" onclick="bulkSyncSheets()" id="bulkSyncBtn" style="padding:10px 20px; margin-bottom:0;">📤 Bulk Sync</button>
                 </div>
                 <div id="configStatus" style="padding:12px; background:rgba(255,255,255,0.02); border:1px solid var(--glass-border); border-radius:var(--radius-md); margin-bottom:15px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
@@ -2066,10 +2066,10 @@
                     Sync your local database (<code>127.0.0.1:5000</code>) to the Render cloud instance. Use this when working offline and you want to push your data to the cloud.
                 </p>
                 <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px;">
-                    <button class="btn btn-primary" onclick="exportLocalDB()" id="btnExport" style="width:auto; padding:10px 20px;">📥 Export Local Database</button>
-                    <button class="btn btn-secondary" onclick="document.getElementById('importFileInput').click()" style="width:auto; padding:10px 20px;">📤 Import Database (from JSON)</button>
+                    <button class="btn btn-primary" onclick="exportLocalDB()" id="btnExport" style="padding:10px 20px;">📥 Export Local Database</button>
+                    <button class="btn btn-secondary" onclick="document.getElementById('importFileInput').click()" style="padding:10px 20px;">📤 Import Database (from JSON)</button>
                     <input type="file" id="importFileInput" accept=".json" style="display:none;" onchange="importLocalDB(this)">
-                    <button class="btn btn-primary" onclick="showCloudPushDialog()" id="btnPushCloud" style="width:auto; padding:10px 20px;">☁️ Push to Cloud</button>
+                    <button class="btn btn-primary" onclick="showCloudPushDialog()" id="btnPushCloud" style="padding:10px 20px;">☁️ Push to Cloud</button>
                 </div>
                 <div id="syncStatus" style="padding:12px; background:rgba(255,255,255,0.02); border:1px solid var(--glass-border); border-radius:var(--radius-md); min-height:40px;">
                     <span style="color:var(--text-muted); font-size:0.82rem;">Ready. Choose an action above.</span>
