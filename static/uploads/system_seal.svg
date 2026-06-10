@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" fill="none">
+  <defs>
+    <style>
+      .ring { stroke: #ffffff; stroke-width: 3; fill: none; }
+      .ring-dash { stroke: #ffffff; stroke-width: 1.5; stroke-dasharray: 6 4; fill: none; }
+      .icon { stroke: #ffffff; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+      .icon-fill { fill: #ffffff; }
+    </style>
+  </defs>
+  <!-- Outer ring -->
+  <circle cx="200" cy="200" r="185" class="ring"/>
+  <circle cx="200" cy="200" r="175" class="ring-dash"/>
+  <!-- Inner ring -->
+  <circle cx="200" cy="200" r="130" class="ring" stroke-width="2"/>
+  <!-- Top arc text path approximation via dots -->
+  <circle cx="200" cy="200" r="150" class="ring-dash" stroke-dasharray="2 18"/>
+  <!-- Document outline -->
+  <rect x="140" y="110" width="120" height="150" rx="8" class="icon"/>
+  <line x1="165" y1="145" x2="235" y2="145" class="icon"/>
+  <line x1="165" y1="165" x2="220" y2="165" class="icon"/>
+  <line x1="165" y1="185" x2="235" y2="185" class="icon"/>
+  <line x1="165" y1="205" x2="200" y2="205" class="icon"/>
+  <!-- Barcode lines inside document -->
+  <rect x="165" y="220" width="3" height="24" class="icon-fill"/>
+  <rect x="173" y="220" width="6" height="24" class="icon-fill"/>
+  <rect x="184" y="220" width="2" height="24" class="icon-fill"/>
+  <rect x="191" y="220" width="5" height="24" class="icon-fill"/>
+  <rect x="201" y="220" width="3" height="24" class="icon-fill"/>
+  <rect x="209" y="220" width="7" height="24" class="icon-fill"/>
+  <rect x="221" y="220" width="3" height="24" class="icon-fill"/>
+  <!-- Checkmark -->
+  <polyline points="280,280 300,300 330,260" class="icon" stroke-width="8"/>
+  <!-- Corner decorative arcs -->
+  <path d="M200,30 A170,170 0 0,1 340,130" class="ring" stroke-width="1.5" opacity="0.3"/>
+  <path d="M200,370 A170,170 0 0,1 60,270" class="ring" stroke-width="1.5" opacity="0.3"/>
+</svg>
