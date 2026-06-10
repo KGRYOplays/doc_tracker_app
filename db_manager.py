@@ -132,6 +132,7 @@ def init_db():
         "code TEXT NOT NULL",
         "doc_type TEXT DEFAULT ''",
         "remarks TEXT",
+        "status TEXT NOT NULL DEFAULT 'for signature'",
     ]
     for i in range(1, 11):
         columns.append(f"receiving_office_{i} TEXT")
@@ -158,7 +159,8 @@ def init_db():
             status TEXT NOT NULL DEFAULT 'Pending',
             school_office TEXT DEFAULT '',
             email TEXT DEFAULT '',
-            requires_password_change INTEGER DEFAULT 0
+            requires_password_change INTEGER DEFAULT 0,
+            supervised_schools TEXT DEFAULT ''
         )
     ''')
     
@@ -173,6 +175,10 @@ def init_db():
         pass
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN requires_password_change INTEGER DEFAULT 0")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN supervised_schools TEXT DEFAULT ''")
     except:
         pass
     
@@ -306,6 +312,18 @@ def init_db():
     # 4. Migrate: add receiver_name columns to existing databases
     _migrate_add_receiver_names(conn)
     
+    # 5. Migrate: add status column to existing routing_records tables
+    try:
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(routing_records)")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+        if 'status' not in existing_cols:
+            cursor.execute("ALTER TABLE routing_records ADD COLUMN status TEXT NOT NULL DEFAULT 'for signature'")
+            conn.commit()
+            print("Migration: added 'status' column to routing_records.")
+    except Exception as e:
+        print(f"Migration note: could not add status column: {e}")
+    
     conn.close()
     
     # Run data migrations (if old excel files exist and db is empty)
@@ -324,6 +342,12 @@ def init_db():
     # Start background GSheets worker for async scan sync.
     # Scans queue row_ids; worker reads from SQLite and pushes to GSheets in background.
     start_gsheets_worker()
+
+    # Start periodic (every N minutes) pull from GSheets so SQLite always has
+    # reasonably fresh data even without a server restart. The interval defaults
+    # to 5 minutes and can be changed at runtime via the gsheets_pull_interval setting.
+    start_periodic_gsheets_pull()
+
 def _seed_gsheets_settings_from_env(cursor, conn):
     """Seed critical GSheets settings from environment variables into SQLite.
     
@@ -912,7 +936,7 @@ def push_row_to_gsheets(sheet_id, service_account_json, row_dict):
     ws = sh.worksheet("Routing Records")
     
     # Always use fixed 10 stages for consistent column alignment
-    target_headers = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks"]
+    target_headers = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks", "Status"]
     for i in range(1, 11):
         target_headers += [f"Receiving Office {i}", f"Receiver Name {i}", f"Timestamp {i}"]
     
@@ -934,7 +958,8 @@ def push_row_to_gsheets(sheet_id, service_account_json, row_dict):
         row_dict.get('employee', ''),
         row_dict.get('code', ''),
         doc_type,
-        row_dict.get('remarks', '')
+        row_dict.get('remarks', ''),
+        row_dict.get('status', 'for signature'),
     ]
     for i in range(1, 11):
         row_data.append(row_dict.get(f'receiving_office_{i}') or "")
@@ -999,7 +1024,7 @@ def push_all_routing_to_gsheets(sheet_id, service_account_json, rows):
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="Routing Records", rows=max(1000, len(rows) + 100), cols=50)
     
-    headers = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks"]
+    headers = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks", "Status"]
     for i in range(1, 11):
         headers += [f"Receiving Office {i}", f"Receiver Name {i}", f"Timestamp {i}"]
     
@@ -1028,7 +1053,8 @@ def push_all_routing_to_gsheets(sheet_id, service_account_json, rows):
             row_dict.get('employee', ''),
             row_dict.get('code', ''),
             doc_type,
-            row_dict.get('remarks', '')
+            row_dict.get('remarks', ''),
+            row_dict.get('status', 'for signature'),
         ]
         for i in range(1, 11):
             row_data.append(row_dict.get(f'receiving_office_{i}') or "")
@@ -1089,7 +1115,7 @@ def push_all_users_to_gsheets(sheet_id, service_account_json, rows):
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="Users", rows=max(100, len(rows) + 10), cols=10)
     
-    headers = ["Username", "Password Hash", "Role", "Status", "School/Office", "Email", "Requires Password Change"]
+    headers = ["Username", "Password Hash", "Role", "Status", "School/Office", "Email", "Requires Password Change", "Supervised Schools"]
     rows_to_write = [headers]
     for r in rows:
         row_dict = dict(r)
@@ -1100,12 +1126,14 @@ def push_all_users_to_gsheets(sheet_id, service_account_json, rows):
             row_dict.get('status', ''),
             row_dict.get('school_office', ''),
             row_dict.get('email', ''),
-            row_dict.get('requires_password_change', 0)
+            row_dict.get('requires_password_change', 0),
+            row_dict.get('supervised_schools', ''),
         ])
         
     ws.clear()
-    ws.update(range_name=f"A1:G{len(rows_to_write)}", values=rows_to_write)
-    ws.format("A1:G1", {"backgroundColor": {"red": 0.05, "green": 0.25, "blue": 0.45}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}})
+    end_col = 'H'
+    ws.update(range_name=f"A1:{end_col}{len(rows_to_write)}", values=rows_to_write)
+    ws.format(f"A1:{end_col}1", {"backgroundColor": {"red": 0.05, "green": 0.25, "blue": 0.45}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}})
     ws.freeze(rows=1)
 
 
@@ -1143,6 +1171,43 @@ def start_gsheets_worker():
     
     worker_thread = threading.Thread(target=_worker, daemon=True)
     worker_thread.start()
+
+
+def start_periodic_gsheets_pull():
+    """Start a background daemon thread that calls pull_all_from_gsheets()
+    on a configurable interval (default: 5 minutes, minimum: 1 minute).
+    The interval is read from the 'gsheets_pull_interval' setting at the
+    start of each cycle so it can be changed at runtime without a restart.
+    """
+    DEFAULT_INTERVAL = 5
+
+    def _worker():
+        while True:
+            try:
+                raw = get_setting('gsheets_pull_interval', str(DEFAULT_INTERVAL))
+                minutes = max(1, int(raw))
+            except (ValueError, TypeError):
+                minutes = DEFAULT_INTERVAL
+
+            time.sleep(minutes * 60)
+
+            try:
+                print(f"[Periodic Pull] Refreshing SQLite from Google Sheets...")
+                count, errors = pull_all_from_gsheets()
+                if errors:
+                    for e in errors:
+                        print(f"[Periodic Pull] Warning: {e}")
+                if count is not None:
+                    print(f"[Periodic Pull] OK — {count} routing records refreshed.")
+                else:
+                    print(f"[Periodic Pull] OK (no routing records count).")
+            except Exception as e:
+                print(f"[Periodic Pull] Error: {e}")
+                time.sleep(30)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    print(f"Periodic GSheets pull worker started (interval: {DEFAULT_INTERVAL} min, configurable via 'gsheets_pull_interval' setting).")
 
 
 def queue_sync(row_id):
@@ -1594,8 +1659,9 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
                 school = str(row.get('School/Office', '')).strip()
                 doc_type = str(row.get('Doc Type', '')).strip()
                 remarks = str(row.get('Remarks', '')).strip()
-                vals = [dept, school, emp, code, doc_type, remarks]
-                col_names = ['department', 'school_office', 'employee', 'code', 'doc_type', 'remarks']
+                status = str(row.get('Status', '')).strip() or 'for signature'
+                vals = [dept, school, emp, code, doc_type, remarks, status]
+                col_names = ['department', 'school_office', 'employee', 'code', 'doc_type', 'remarks', 'status']
                 
                 for k, v in row.items():
                     if 'Receiving Office' in k:
@@ -1637,20 +1703,21 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
                 school_office = str(row.get('School/Office', '')).strip()
                 email = str(row.get('Email', '')).strip()
                 requires_pw_change = int(row.get('Requires Password Change', 0))
+                supervised_schools = str(row.get('Supervised Schools', '')).strip()
                 cursor.execute(
                     "INSERT OR REPLACE INTO users "
-                    "(username, password_hash, role, status, school_office, email, requires_password_change) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (username, pw_hash, role, status, school_office, email, requires_pw_change)
+                    "(username, password_hash, role, status, school_office, email, requires_password_change, supervised_schools) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (username, pw_hash, role, status, school_office, email, requires_pw_change, supervised_schools)
                 )
             # Ensure admin account always exists even if missing from GSheets
             if not cursor.execute("SELECT username FROM users WHERE username = 'admin'").fetchone():
                 import hashlib as _hashlib
                 fallback_hash = admin_row['password_hash'] if admin_row else _hashlib.sha256(b'admin123').hexdigest()
                 cursor.execute(
-                    "INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    ('admin', fallback_hash, 'Admin', 'Approved', '', 'admin@deped.gov.ph', 0)
+                    "INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change, supervised_schools) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    ('admin', fallback_hash, 'Admin', 'Approved', '', 'admin@deped.gov.ph', 0, '')
                 )
             print(f"GSheets pull: users restored.")
         except gspread.exceptions.WorksheetNotFound:
@@ -1805,9 +1872,9 @@ def push_user_to_gsheets(sheet_id, service_account_json, user_dict):
         ws = sh.worksheet("Users")
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="Users", rows=1000, cols=10)
-        headers = ["Username", "Password Hash", "Role", "Status", "School/Office", "Email", "Requires Password Change"]
+        headers = ["Username", "Password Hash", "Role", "Status", "School/Office", "Email", "Requires Password Change", "Supervised Schools"]
         ws.insert_row(headers, 1)
-        ws.format("A1:G1", {"backgroundColor": {"red": 0.05, "green": 0.25, "blue": 0.45}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}})
+        ws.format("A1:H1", {"backgroundColor": {"red": 0.05, "green": 0.25, "blue": 0.45}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}})
         
     username = str(user_dict.get('username', '')).strip().lower()
     all_rows = ws.get_all_values()
@@ -1831,7 +1898,8 @@ def push_user_to_gsheets(sheet_id, service_account_json, user_dict):
         user_dict.get('status', ''),
         user_dict.get('school_office', ''),
         user_dict.get('email', ''),
-        user_dict.get('requires_password_change', 0)
+        user_dict.get('requires_password_change', 0),
+        user_dict.get('supervised_schools', ''),
     ]
     
     if match_row_num:

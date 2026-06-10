@@ -11,6 +11,7 @@ from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
 import hashlib
 import json as json_lib
+import threading
 
 import db_manager
 
@@ -28,6 +29,9 @@ if not os.path.exists(QR_FOLDER):
 
 # Initialize database on startup
 db_manager.init_db()
+
+# Serialize concurrent scan writes so SELECT → INSERT/UPDATE is atomic
+scan_lock = threading.Lock()
 
 
 # ─────────────────────────────────────────────
@@ -143,19 +147,16 @@ def get_code_lookup(code):
 #  BARCODE / LABEL GENERATION HELPERS
 # ─────────────────────────────────────────────
 def generate_barcode_image(code):
-    """Generate a barcode PIL image with 1.5-inch width in a bordered box."""
+    """Generate a barcode PIL image, 1.5 in wide x 0.75 in tall at 300 DPI."""
     from barcode import Code128
     from barcode.writer import ImageWriter
-
-    # 1.5 inches = 144 pixels at 96 DPI (but we'll use 300 DPI for quality)
-    # Target: 1.5 inches ≈ 450 pixels at 300 DPI
     DPI = 300
-    TARGET_W_INCHES = 1.5
+    target_w = int(1.5 * DPI)
+    target_h = int(0.75 * DPI)
 
-    # First pass: generate base barcode with custom writer options
     writer_options = {
-        'module_width': 0.35,      # wider modules for readability
-        'module_height': 15.0,     # taller barcode
+        'module_width': 0.35,
+        'module_height': 15.0,
         'font_size': 10,
         'text_distance': 3,
         'quiet_zone': 1.0,
@@ -163,163 +164,142 @@ def generate_barcode_image(code):
         'background': 'white',
         'foreground': 'black',
     }
-    
     writer = ImageWriter()
     barcode_obj = Code128(code, writer=writer)
-    
-    # Render to bytes first
     buf = io.BytesIO()
     barcode_obj.write(buf, writer_options)
     buf.seek(0)
     img = Image.open(buf).convert('RGB')
-    
-    # Resize to exactly 1.5 inches width at 300 DPI
-    target_px = int(TARGET_W_INCHES * DPI)
-    aspect = img.height / img.width
-    target_h = int(target_px * aspect)
-    img = img.resize((target_px, target_h), Image.LANCZOS)
-    
-    # Add border (box) around the barcode
-    border_px = 8
-    boxed_w = target_px + border_px * 2
-    boxed_h = target_h + border_px * 2 + 30  # extra space for code text below
+    img = img.resize((target_w, target_h), Image.LANCZOS)
+
+    border_px = 6
+    boxed_w = target_w + border_px * 2
+    boxed_h = target_h + border_px * 2 + 24
     boxed = Image.new('RGB', (boxed_w, boxed_h), 'white')
     draw = ImageDraw.Draw(boxed)
-    
-    # Draw outer border box
     draw.rectangle([0, 0, boxed_w - 1, boxed_h - 1], outline='black', width=2)
-    
-    # Paste barcode image centered in box
-    paste_x = (boxed_w - target_px) // 2
+    paste_x = (boxed_w - target_w) // 2
     paste_y = border_px
     boxed.paste(img, (paste_x, paste_y))
-    
-    # Add code text below the barcode
     try:
-        font = ImageFont.truetype("arial.ttf", 18)
+        font = ImageFont.truetype("arial.ttf", 16)
     except:
         font = ImageFont.load_default()
-    
-    text = f"CODE: {code}"
+    text = f"{code}"
     bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_x = (boxed_w - text_w) // 2
-    text_y = boxed_h - 25
+    text_x = (boxed_w - (bbox[2] - bbox[0])) // 2
+    text_y = boxed_h - 20
     draw.text((text_x, text_y), text, fill='black', font=font)
-    
     return boxed
 
 
 def generate_qr_image(code):
-    """Generate a QR code PIL image with 1.5-inch width in a bordered box."""
+    """Generate a QR code PIL image, 1.5 in x 1.5 in square at 300 DPI."""
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
     qr.add_data(code)
     qr.make(fit=True)
     img = qr.make_image(fill="black", back_color="white").convert('RGB')
-    
-    # Resize to 1.5 inches at 300 DPI
     DPI = 300
-    TARGET_W_INCHES = 1.5
-    target_px = int(TARGET_W_INCHES * DPI)
-    aspect = img.height / img.width
-    target_h = int(target_px * aspect)
-    img = img.resize((target_px, target_h), Image.LANCZOS)
-    
-    # Add border box
-    border_px = 8
-    boxed_w = target_px + border_px * 2
-    boxed_h = target_h + border_px * 2 + 30
+    target = int(1.5 * DPI)
+    img = img.resize((target, target), Image.LANCZOS)
+
+    border_px = 6
+    boxed_w = target + border_px * 2
+    boxed_h = target + border_px * 2 + 24
     boxed = Image.new('RGB', (boxed_w, boxed_h), 'white')
     draw = ImageDraw.Draw(boxed)
-    
     draw.rectangle([0, 0, boxed_w - 1, boxed_h - 1], outline='black', width=2)
-    paste_x = (boxed_w - target_px) // 2
+    paste_x = (boxed_w - target) // 2
     paste_y = border_px
     boxed.paste(img, (paste_x, paste_y))
-    
     try:
-        font = ImageFont.truetype("arial.ttf", 18)
+        font = ImageFont.truetype("arial.ttf", 16)
     except:
         font = ImageFont.load_default()
-    
-    text = f"CODE: {code}"
+    text = f"{code}"
     bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_x = (boxed_w - text_w) // 2
-    text_y = boxed_h - 25
+    text_x = (boxed_w - (bbox[2] - bbox[0])) // 2
+    text_y = boxed_h - 20
     draw.text((text_x, text_y), text, fill='black', font=font)
-    
     return boxed
 
 
-def create_label_pdf(codes, doc_type='label', dpi=300, label_width_in=1.5):
+def create_label_pdf(codes, dpi=300):
     """
-    Create a PDF with properly sized barcode labels (1.5 inches wide)
-    suitable for batch printing on sticker/label sheets.
+    Create a PDF with 4 columns x 5 rows of combined QR + barcode labels
+    on 8.5 x 13 (Legal) paper. Each cell shows the QR (1.5" sq) on top
+    and the Code128 barcode (1.5" x 0.75") below.
     """
-    from reportlab.lib.pagesizes import letter, A4
-    from reportlab.lib.units import inch, mm
+    from reportlab.lib.pagesizes import legal
+    from reportlab.lib.units import inch
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
-    
+
+    PAGE_W, PAGE_H = legal  # 8.5 x 13 in points
+    COLS, ROWS = 4, 5
+    MARGIN = 0.4 * inch
+    GAP = 0.15 * inch
+
+    usable_w = PAGE_W - 2 * MARGIN
+    usable_h = PAGE_H - 2 * MARGIN
+    cell_w = (usable_w - (COLS - 1) * GAP) / COLS
+    cell_h = (usable_h - (ROWS - 1) * GAP) / ROWS
+    pad_x = (usable_w - (COLS * cell_w + (COLS - 1) * GAP)) / 2
+    pad_y = (usable_h - (ROWS * cell_h + (ROWS - 1) * GAP)) / 2
+
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=letter)
-    
-    # Label dimensions
-    label_w = label_width_in * inch
-    label_h = label_w * 0.75  # 1.5 x 1.125 inch labels
-    margin_x = 0.5 * inch
-    margin_y = 0.5 * inch
-    gap = 0.15 * inch
-    
-    # Calculate labels per page
-    usable_w = letter[0] - 2 * margin_x
-    usable_h = letter[1] - 2 * margin_y
-    cols = int((usable_w + gap) / (label_w + gap))
-    rows = int((usable_h + gap) / (label_h + gap))
-    padding_x = (usable_w - (cols * label_w + (cols - 1) * gap)) / 2
-    padding_y = (usable_h - (rows * label_h + (rows - 1) * gap)) / 2
-    
+    c = canvas.Canvas(buf, pagesize=legal)
+
     for idx, item in enumerate(codes):
         code = item.get('code', '')
-        img_type = item.get('type', 'barcode')
-        
-        if idx > 0 and idx % (cols * rows) == 0:
+
+        if idx > 0 and idx % (COLS * ROWS) == 0:
             c.showPage()
-        
-        pos = idx % (cols * rows)
-        col = pos % cols
-        row = pos // cols
-        
-        x = margin_x + padding_x + col * (label_w + gap)
-        y = margin_y + padding_y + row * (label_h + gap)
-        
-        # Generate image
-        if img_type == 'qr':
-            pil_img = generate_qr_image(code)
-        else:
-            pil_img = generate_barcode_image(code)
-        
-        # Scale to fit within label area with small padding
-        img_w, img_h = pil_img.size
-        scale = min(label_w * 0.85 / img_w, label_h * 0.85 / img_h)
-        disp_w = img_w * scale
-        disp_h = img_h * scale
-        img_x = x + (label_w - disp_w) / 2
-        img_y = y + (label_h - disp_h) / 2
-        
-        temp_buf = io.BytesIO()
-        pil_img.save(temp_buf, format='PNG')
-        temp_buf.seek(0)
-        c.drawImage(ImageReader(temp_buf), img_x, img_y, width=disp_w, height=disp_h)
-        
-        # Draw label border outline (dashed)
+
+        pos = idx % (COLS * ROWS)
+        col = pos % COLS
+        row = pos // COLS
+
+        cx = MARGIN + pad_x + col * (cell_w + GAP)
+        cy = MARGIN + pad_y + row * (cell_h + GAP)
+
+        qr_pil = generate_qr_image(code)
+        bc_pil = generate_barcode_image(code)
+
+        # Scale QR to fit in upper ~60% of cell
+        qr_max_w = cell_w * 0.85
+        qr_max_h = cell_h * 0.55
+        qr_scale = min(qr_max_w / qr_pil.width, qr_max_h / qr_pil.height)
+        qr_disp_w = qr_pil.width * qr_scale
+        qr_disp_h = qr_pil.height * qr_scale
+        qr_x = cx + (cell_w - qr_disp_w) / 2
+        qr_y = cy + cell_h * 0.42 + (cell_h * 0.58 - qr_disp_h) / 2
+
+        # Scale barcode to fit in lower ~40% of cell
+        bc_max_w = cell_w * 0.85
+        bc_max_h = cell_h * 0.35
+        bc_scale = min(bc_max_w / bc_pil.width, bc_max_h / bc_pil.height)
+        bc_disp_w = bc_pil.width * bc_scale
+        bc_disp_h = bc_pil.height * bc_scale
+        bc_x = cx + (cell_w - bc_disp_w) / 2
+        bc_y = cy + (cell_h * 0.42 - bc_disp_h) / 2
+
+        def _draw(pil_img, x, y, w, h):
+            tmp = io.BytesIO()
+            pil_img.save(tmp, format='PNG')
+            tmp.seek(0)
+            c.drawImage(ImageReader(tmp), x, y, width=w, height=h)
+
+        _draw(qr_pil, qr_x, qr_y, qr_disp_w, qr_disp_h)
+        _draw(bc_pil, bc_x, bc_y, bc_disp_w, bc_disp_h)
+
+        # Dashed cell border
         c.setStrokeColorRGB(0.7, 0.7, 0.7)
         c.setLineWidth(0.5)
-        c.rect(x, y, label_w, label_h)
+        c.rect(cx, cy, cell_w, cell_h)
         c.setStrokeColorRGB(0, 0, 0)
         c.setLineWidth(1)
-    
+
     c.save()
     buf.seek(0)
     return buf
@@ -589,9 +569,11 @@ def login():
         if user['status'] != 'Approved':
             return jsonify({'status': 'error', 'message': 'Your account is pending admin approval.'}), 403
             
+        supervised = (user['supervised_schools'] or '').strip()
         session['username'] = user['username']
         session['user_role'] = user['role']
         session['school_office'] = user['school_office'] or ''
+        session['supervised_schools'] = supervised
         session.permanent = True
         
         return jsonify({
@@ -601,7 +583,8 @@ def login():
             'user': {
                 'username': user['username'],
                 'role': user['role'],
-                'school_office': user['school_office'] or ''
+                'school_office': user['school_office'] or '',
+                'supervised_schools': supervised
             }
         })
     except Exception as e:
@@ -643,8 +626,14 @@ def register():
         # Default password is the username itself, and force change on first login
         password = username  # default passkey = username
         pw_hash = hashlib.sha256(password.encode()).hexdigest()
-        conn.execute("INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change) VALUES (?, ?, ?, 'Pending', ?, ?, 1)",
-                     (username, pw_hash, role_request, school_office, email))
+        supervised_schools = ''
+        if role_request == 'Supervisor':
+            supervised_schools = data.get('supervised_schools', '').strip()
+        conn.execute(
+            "INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change, supervised_schools) "
+            "VALUES (?, ?, ?, 'Pending', ?, ?, 1, ?)",
+            (username, pw_hash, role_request, school_office, email, supervised_schools)
+        )
         conn.commit()
         conn.close()
         
@@ -664,17 +653,19 @@ def register():
 @app.route('/api/guest_login', methods=['POST'])
 def guest_login():
     try:
+        data = request.json or {}
+        school = data.get('school_office', '').strip()
         session['username'] = 'guest'
         session['user_role'] = 'Guest'
-        session['school_office'] = ''
+        session['school_office'] = school
         session.permanent = True
         return jsonify({
             'status': 'success',
-            'message': 'Logged in as Guest!',
+            'message': 'Logged in as Guest!' + (f' Viewing: {school}' if school else ''),
             'user': {
                 'username': 'guest',
                 'role': 'Guest',
-                'school_office': ''
+                'school_office': school
             }
         })
     except Exception as e:
@@ -686,7 +677,8 @@ def check_auth():
         'logged_in': bool(session.get('username')),
         'username': session.get('username', ''),
         'role': session.get('user_role', 'Viewer'),
-        'school_office': session.get('school_office', '')
+        'school_office': session.get('school_office', ''),
+        'supervised_schools': session.get('supervised_schools', '')
     })
 
 @app.route('/api/logout', methods=['POST'])
@@ -701,14 +693,24 @@ def update_profile():
     try:
         data = request.json
         school_office = data.get('school_office', '').strip()
+        supervised_schools = data.get('supervised_schools', '').strip()
         username = session['username']
         
         conn = db_manager.get_db_connection()
-        conn.execute("UPDATE users SET school_office = ? WHERE username = ?", (school_office, username))
+        user_role = conn.execute("SELECT role FROM users WHERE username = ?", (username,)).fetchone()['role']
+        if user_role == 'Supervisor':
+            conn.execute(
+                "UPDATE users SET school_office = ?, supervised_schools = ? WHERE username = ?",
+                (school_office, supervised_schools, username)
+            )
+        else:
+            conn.execute("UPDATE users SET school_office = ? WHERE username = ?", (school_office, username))
         conn.commit()
         conn.close()
         
         session['school_office'] = school_office
+        if user_role == 'Supervisor':
+            session['supervised_schools'] = supervised_schools
         
         return jsonify({'status': 'success', 'message': 'Profile updated!'})
     except Exception as e:
@@ -719,7 +721,10 @@ def update_profile():
 def get_user_profile():
     try:
         conn = db_manager.get_db_connection()
-        user = conn.execute("SELECT username, role, status, school_office FROM users WHERE username = ?", (session['username'],)).fetchone()
+        user = conn.execute(
+            "SELECT username, role, status, school_office, supervised_schools FROM users WHERE username = ?",
+            (session['username'],)
+        ).fetchone()
         conn.close()
         if user:
             return jsonify({'status': 'success', 'user': dict(user)})
@@ -735,7 +740,7 @@ def get_user_profile():
 def admin_get_users():
     try:
         conn = db_manager.get_db_connection()
-        rows = conn.execute("SELECT username, role, status, school_office FROM users").fetchall()
+        rows = conn.execute("SELECT username, role, status, school_office, supervised_schools FROM users").fetchall()
         conn.close()
         users = [dict(r) for r in rows]
         return jsonify({'status': 'success', 'users': users})
@@ -756,7 +761,11 @@ def admin_approve_user(username):
             conn.close()
             return jsonify({'status': 'error', 'message': 'User not found.'}), 404
             
-        conn.execute("UPDATE users SET status = 'Approved', role = ? WHERE username = ?", (assigned_role, username))
+        supervised_schools = data.get('supervised_schools', '').strip()
+        conn.execute(
+            "UPDATE users SET status = 'Approved', role = ?, supervised_schools = ? WHERE username = ?",
+            (assigned_role, supervised_schools, username)
+        )
         conn.commit()
         
         # Get updated user dict for GSheets sync
@@ -1064,11 +1073,13 @@ def generate_code():
         employees  = data.get('employees')
         doc_type   = data.get('doc_type')
 
-        # ── USER ROLE: force-override dept + school to session's assigned values ──
+        # ── ROLE-BASED SCHOOL RESTRICTIONS ──
         user_role     = session.get('user_role', '')
         user_school   = session.get('school_office', '')
+        supervised    = session.get('supervised_schools', '').strip()
+
         if user_role == 'User' and user_school:
-            # Resolve the department for this school from master_data
+            # Force to assigned school
             conn = db_manager.get_db_connection()
             row = conn.execute(
                 "SELECT department FROM master_data WHERE school_office = ? LIMIT 1",
@@ -1079,6 +1090,11 @@ def generate_code():
                 department = row['department']
             school = user_school
 
+        elif user_role == 'Supervisor' and supervised:
+            schools = [s.strip() for s in supervised.split(',') if s.strip()]
+            if school and school not in schools:
+                return jsonify({'status': 'error', 'message': 'You can only generate codes for your supervised schools.'}), 403
+
         # ── CUSTOM NAMES ARE MONITORING-ONLY: ensure they are NOT inserted into master_data ──
         # save_code_lookup() stores names in code_lookup.employees; it does NOT touch master_data.
         # The only place that adds to master_data is the admin API (/api/admin/master_data/add)
@@ -1087,31 +1103,32 @@ def generate_code():
         save_code_lookup(code, department, school, employees, doc_type)
 
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-        filename  = f"code_{timestamp}"
-        filepath  = os.path.join(QR_FOLDER, filename)
+        basename  = f"code_{timestamp}"
 
-        if code_type == 'barcode':
-            try:
-                from barcode import Code128
-                from barcode.writer import ImageWriter
-                barcode_obj = Code128(code, writer=ImageWriter())
-                barcode_obj.save(filepath)
-            except Exception as e:
-                print(f"Barcode lib failed: {e}. Falling back to QR.")
-                code_type = 'qr'
+        # Generate QR (1.5" x 1.5") and Barcode (1.5" x 0.75") side by side
+        qr_img = generate_qr_image(code)
+        qr_path = os.path.join(QR_FOLDER, f"{basename}_qr.png")
+        qr_img.save(qr_path)
 
-        if code_type == 'qr':
-            qr = qrcode.QRCode(version=1, box_size=10, border=4)
-            qr.add_data(code)
-            qr.make(fit=True)
-            img = qr.make_image(fill="black", back_color="white")
-            img.save(f"{filepath}.png")
+        bc_img = generate_barcode_image(code)
+        bc_path = os.path.join(QR_FOLDER, f"{basename}_barcode.png")
+        bc_img.save(bc_path)
+
+        # Also save a combined preview image (QR on top, barcode below)
+        combined_w = max(qr_img.width, bc_img.width)
+        combined_h = qr_img.height + bc_img.height
+        combined = Image.new('RGB', (combined_w, combined_h), 'white')
+        combined.paste(qr_img, ((combined_w - qr_img.width) // 2, 0))
+        combined.paste(bc_img, ((combined_w - bc_img.width) // 2, qr_img.height))
+        combined_path = os.path.join(QR_FOLDER, f"{basename}.png")
+        combined.save(combined_path)
 
         return jsonify({
-            'status':        'success',
-            'image_url':     f"/static/qr_generated/{filename}.png",
-            'code_display':  code,
-            'generated_type': code_type
+            'status':         'success',
+            'code_display':   code,
+            'image_url':      f"/static/qr_generated/{basename}.png",
+            'qr_image_url':   f"/static/qr_generated/{basename}_qr.png",
+            'barcode_image_url': f"/static/qr_generated/{basename}_barcode.png",
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
@@ -1224,136 +1241,150 @@ def barcode_overlay():
 @app.route('/log_scan', methods=['POST'])
 @require_login
 def log_scan():
-    try:
-        data             = request.json
-        code             = data.get('scanned_data', '').strip().upper()
-        receiving_office = data.get('receiving_office', '').strip()
-        receiver_name    = data.get('receiver_name', '').strip()
+    with scan_lock:
+        try:
+            data             = request.json
+            code             = data.get('scanned_data', '').strip().upper()
+            receiving_office = data.get('receiving_office', '').strip()
+            receiver_name    = data.get('receiver_name', '').strip()
 
-        # ── USER ROLE: force-override receiving_office to session's assigned school ──
-        user_role     = session.get('user_role', '')
-        user_school   = session.get('school_office', '')
-        if user_role == 'User' and user_school:
-            receiving_office = user_school
+            # ── ROLE-BASED SCHOOL RESTRICTIONS ──
+            user_role     = session.get('user_role', '')
+            user_school   = session.get('school_office', '')
+            supervised    = session.get('supervised_schools', '').strip()
+            if user_role == 'User' and user_school:
+                receiving_office = user_school
+            elif user_role == 'Supervisor' and supervised:
+                allowed = [s.strip().lower() for s in supervised.split(',') if s.strip()]
+                if receiving_office.strip().lower() not in allowed:
+                    return jsonify({'status': 'error', 'message': 'You can only scan at your supervised schools/offices.'}), 403
 
-        if not receiving_office:
-            return jsonify({'status': 'error', 'message': 'Please select a Receiving Office!'})
+            if not receiving_office:
+                return jsonify({'status': 'error', 'message': 'Please select a Receiving Office!'})
 
-        lookup = get_code_lookup(code)
-        if not lookup:
-            return jsonify({'status': 'error', 'message': f'Barcode "{code}" not found in database!'})
+            lookup = get_code_lookup(code)
+            if not lookup:
+                return jsonify({'status': 'error', 'message': f'Barcode "{code}" not found in database!'})
 
-        employees = [e.strip() for e in lookup['employees'] if e.strip()]
-        if not employees:
-            return jsonify({'status': 'error', 'message': 'No employees linked to this barcode!'})
+            employees = [e.strip() for e in lookup['employees'] if e.strip()]
+            if not employees:
+                return jsonify({'status': 'error', 'message': 'No employees linked to this barcode!'})
 
-        conn = db_manager.get_db_connection()
+            conn = db_manager.get_db_connection()
 
-        # ── 1. ACCIDENTAL DOUBLE-SCAN CHECK ──────────────────────────────────
-        for emp in employees:
-            row = conn.execute(
-                "SELECT * FROM routing_records WHERE code = ? AND employee = ?", (code, emp)
-            ).fetchone()
-            if row:
-                office_cols = [c for c in row.keys() if c.startswith('receiving_office_')]
-                stages = sorted({int(c.split('_')[-1]) for c in office_cols if c.split('_')[-1].isdigit()})
-                if not stages:
-                    stages = list(range(1, 11))
+            # ── 1. ACCIDENTAL DOUBLE-SCAN CHECK ──────────────────────────────────
+            for emp in employees:
+                row = conn.execute(
+                    "SELECT * FROM routing_records WHERE code = ? AND employee = ?", (code, emp)
+                ).fetchone()
+                if row:
+                    office_cols = [c for c in row.keys() if c.startswith('receiving_office_')]
+                    stages = sorted({int(c.split('_')[-1]) for c in office_cols if c.split('_')[-1].isdigit()})
+                    if not stages:
+                        stages = list(range(1, 11))
 
-                latest_office = latest_ts = None
-                latest_receiver = None
-                for i in sorted(stages, reverse=True):
-                    key = f'receiving_office_{i}'
-                    if key in row.keys() and row[key]:
-                        latest_office = row[key]
-                        receiver_key = f'receiver_name_{i}'
-                        latest_receiver = row[receiver_key] if receiver_key in row.keys() else ''
-                        latest_ts     = row[f'timestamp_{i}']
-                        break
+                    latest_office = latest_ts = None
+                    latest_receiver = None
+                    for i in sorted(stages, reverse=True):
+                        key = f'receiving_office_{i}'
+                        if key in row.keys() and row[key]:
+                            latest_office = row[key]
+                            receiver_key = f'receiver_name_{i}'
+                            latest_receiver = row[receiver_key] if receiver_key in row.keys() else ''
+                            latest_ts     = row[f'timestamp_{i}']
+                            break
 
-                if (latest_office and latest_office.strip().lower() == receiving_office.lower() and 
-                    latest_receiver and latest_receiver.strip().lower() == receiver_name.lower()):
-                    conn.close()
-                    return jsonify({
-                        'status':  'warning',
-                        'message': f'Duplicate scan! Already received at "{latest_office}" by "{latest_receiver}" on {latest_ts}.'
-                    })
+                    if (latest_office and latest_office.strip().lower() == receiving_office.lower() and 
+                        latest_receiver and latest_receiver.strip().lower() == receiver_name.lower()):
+                        conn.close()
+                        return jsonify({
+                            'status':  'warning',
+                            'message': f'Duplicate scan! Already received at "{latest_office}" by "{latest_receiver}" on {latest_ts}.'
+                        })
 
-        # ── 2. LOG THE ROUTING STAMP ──────────────────────────────────────────
-        current_ts       = datetime.now().strftime("%m/%d/%Y")
-        updated_rows_ids = []
-        slot_updated     = 1
+            # ── 2. LOG THE ROUTING STAMP ──────────────────────────────────────────
+            current_ts       = datetime.now().strftime("%m/%d/%Y")
+            updated_rows_ids = []
+            slot_updated     = 1
 
-        for emp in employees:
-            row = conn.execute(
-                "SELECT * FROM routing_records WHERE code = ? AND employee = ?", (code, emp)
-            ).fetchone()
+            for emp in employees:
+                row = conn.execute(
+                    "SELECT * FROM routing_records WHERE code = ? AND employee = ?", (code, emp)
+                ).fetchone()
 
-            if not row:
-                # First scan — ensure stage-1 columns exist, then insert
-                db_manager.ensure_routing_columns(conn, 1)
-                cursor = conn.cursor()
-                cursor.execute(
-                    "INSERT INTO routing_records "
-                    "(department, school_office, employee, code, receiving_office_1, receiver_name_1, timestamp_1) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (lookup['department'], lookup['school'], emp, code,
-                     receiving_office, receiver_name, current_ts)
-                )
-                conn.commit()
-                updated_rows_ids.append(cursor.lastrowid)
-                slot_updated = 1
+                if not row:
+                    db_manager.ensure_routing_columns(conn, 1)
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "INSERT INTO routing_records "
+                        "(department, school_office, employee, code, receiving_office_1, receiver_name_1, timestamp_1) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (lookup['department'], lookup['school'], emp, code,
+                         receiving_office, receiver_name, current_ts)
+                    )
+                    conn.commit()
+                    updated_rows_ids.append(cursor.lastrowid)
+                    slot_updated = 1
 
-            else:
-                record_id   = row['id']
-                office_cols = [c for c in row.keys() if c.startswith('receiving_office_')]
-                stages = sorted({int(c.split('_')[-1]) for c in office_cols if c.split('_')[-1].isdigit()})
-                if not stages:
-                    stages = list(range(1, 11))
+                else:
+                    record_id   = row['id']
+                    office_cols = [c for c in row.keys() if c.startswith('receiving_office_')]
+                    stages = sorted({int(c.split('_')[-1]) for c in office_cols if c.split('_')[-1].isdigit()})
+                    if not stages:
+                        stages = list(range(1, 11))
 
-                empty_slot = None
-                for i in stages:
-                    key = f'receiving_office_{i}'
-                    if key in row.keys() and not row[key]:
-                        empty_slot = i
-                        break
+                    empty_slot = None
+                    for i in stages:
+                        key = f'receiving_office_{i}'
+                        if key in row.keys() and not row[key]:
+                            empty_slot = i
+                            break
 
-                if empty_slot is None:
-                    # All slots full — expand schema dynamically
-                    next_slot = max(stages) + 1
-                    db_manager.ensure_routing_columns(conn, next_slot)
-                    empty_slot = next_slot
+                    if empty_slot is None:
+                        next_slot = max(stages) + 1
+                        db_manager.ensure_routing_columns(conn, next_slot)
+                        empty_slot = next_slot
 
-                conn.execute(
-                    f"UPDATE routing_records "
-                    f"SET receiving_office_{empty_slot}=?, receiver_name_{empty_slot}=?, timestamp_{empty_slot}=? "
-                    f"WHERE id=?",
-                    (receiving_office, receiver_name, current_ts, record_id)
-                )
-                conn.commit()
-                updated_rows_ids.append(record_id)
-                slot_updated = empty_slot
+                    conn.execute(
+                        f"UPDATE routing_records "
+                        f"SET receiving_office_{empty_slot}=?, receiver_name_{empty_slot}=?, timestamp_{empty_slot}=? "
+                        f"WHERE id=?",
+                        (receiving_office, receiver_name, current_ts, record_id)
+                    )
+                    conn.commit()
+                    updated_rows_ids.append(record_id)
+                    slot_updated = empty_slot
 
-        conn.close()
+                # Auto-set status to 'released' when scanned at RECORDS SIGNATURE
+                # unless admin manually set it to 'with corrections'
+                if receiving_office.strip().upper() == 'RECORDS SIGNATURE':
+                    prev_status = row['status'] if row else ''
+                    if prev_status != 'with corrections':
+                        conn.execute(
+                            "UPDATE routing_records SET status = 'released' "
+                            "WHERE code = ? AND employee = ?",
+                            (code, emp)
+                        )
+                        conn.commit()
 
-        # Queue each updated/inserted routing record for async Google Sheets sync.
-        # The background worker pushes to GSheets so scans return instantly (~50-200ms).
-        for r_id in updated_rows_ids:
-            db_manager.queue_sync(r_id)
-        db_manager.trigger_excel_export()
+            conn.close()
 
-        return jsonify({
-            'status':    'success',
-            'message':   f'Tracked {len(employees)} employee(s) at "{receiving_office}"!',
-            'data':      employees,
-            'school':    lookup['school'],
-            'doc_type':  lookup['doc_type'],
-            'timestamp': current_ts,
-            'slot':      slot_updated
-        })
+            for r_id in updated_rows_ids:
+                db_manager.queue_sync(r_id)
+            db_manager.trigger_excel_export()
 
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)})
+            return jsonify({
+                'status':    'success',
+                'message':   f'Tracked {len(employees)} employee(s) at "{receiving_office}"!',
+                'data':      employees,
+                'school':    lookup['school'],
+                'doc_type':  lookup['doc_type'],
+                'timestamp': current_ts,
+                'slot':      slot_updated
+            })
+
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)})
 
 
 # ─────────────────────────────────────────────
@@ -1387,9 +1418,11 @@ def get_routing_records():
         where_sql = ""
         params    = []
 
-        # ── USER ROLE: filter records to only their own school/office ──
+        # ── ROLE-BASED FILTERING ──
         user_role   = session.get('user_role', '')
         user_school = session.get('school_office', '')
+        supervised = session.get('supervised_schools', '').strip()
+
         if user_role == 'User' and user_school:
             where_sql = "WHERE school_office = ?"
             params.append(user_school)
@@ -1397,6 +1430,25 @@ def get_routing_records():
                 where_sql += " AND (employee LIKE ? OR code LIKE ? OR department LIKE ? OR school_office LIKE ?)"
                 pat = f"%{search}%"
                 params += [pat, pat, pat, pat]
+
+        elif user_role == 'Supervisor' and supervised:
+            schools_list = [s.strip() for s in supervised.split(',') if s.strip()]
+            placeholders = ','.join(['?'] * len(schools_list))
+            where_sql = f"WHERE school_office IN ({placeholders})"
+            params.extend(schools_list)
+            if search:
+                where_sql += " AND (employee LIKE ? OR code LIKE ? OR department LIKE ? OR school_office LIKE ?)"
+                pat = f"%{search}%"
+                params += [pat, pat, pat, pat]
+
+        elif user_role == 'Guest' and user_school:
+            where_sql = "WHERE school_office = ?"
+            params.append(user_school)
+            if search:
+                where_sql += " AND (employee LIKE ? OR code LIKE ? OR department LIKE ? OR school_office LIKE ?)"
+                pat = f"%{search}%"
+                params += [pat, pat, pat, pat]
+
         elif search:
             where_sql = ("WHERE (employee LIKE ? OR code LIKE ? "
                          "OR department LIKE ? OR school_office LIKE ?)")
@@ -1541,6 +1593,7 @@ def get_settings():
             'gsheets_from_env':     creds_from_env and id_from_env,  # True = survives Render wipes
             'scanner_pin':          db_manager.get_setting('scanner_pin', 'scanner123'),
             'admin_pin':            db_manager.get_setting('admin_pin', 'admin123'),
+            'gsheets_pull_interval': db_manager.get_setting('gsheets_pull_interval', '5'),
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
@@ -1562,6 +1615,15 @@ def save_settings():
             db_manager.save_setting('scanner_pin', data['scanner_pin'].strip())
         if data.get('admin_pin', '').strip():
             db_manager.save_setting('admin_pin', data['admin_pin'].strip())
+
+        if data.get('gsheets_pull_interval', '').strip():
+            val = data['gsheets_pull_interval'].strip()
+            try:
+                parsed = int(val)
+                if parsed >= 1:
+                    db_manager.save_setting('gsheets_pull_interval', str(parsed))
+            except ValueError:
+                pass  # silently ignore invalid values
 
         return jsonify({'status': 'success', 'message': 'Settings saved!'})
     except ValueError as ve:

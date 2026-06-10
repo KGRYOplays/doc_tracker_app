@@ -580,6 +580,14 @@
             margin-bottom: 20px;
         }
 
+        .code-preview-img {
+            border: 5px solid white;
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow);
+            background: white;
+            max-width: 100%;
+        }
+
         .qr-success {
             font-size: 1.2rem;
             font-weight: 700;
@@ -956,7 +964,12 @@
                 <input type="password" id="loginPassword" placeholder="Passkey" autocomplete="current-password"
                        onkeypress="if(event.key==='Enter') submitLogin()">
                 <button class="btn-auth" onclick="submitLogin()">🔓 Sign In</button>
-                <button class="btn-auth" onclick="guestLogin()" style="background:linear-gradient(135deg,#10b981,#059669);margin-bottom:4px;">👁️ Sign in as Guest (Read-Only Records)</button>
+                <div id="guestSchoolPicker" style="margin:10px 0; display:none;">
+                    <select id="guestSchoolSelect" style="width:100%; padding:12px; background:rgba(15,23,42,0.6); border:1px solid var(--glass-border); border-radius:var(--radius-md); color:var(--text-main); font-size:0.9rem;">
+                        <option value="">-- Select School/Office --</option>
+                    </select>
+                </div>
+                <button class="btn-auth" onclick="showGuestSchoolPicker()" style="background:linear-gradient(135deg,#10b981,#059669);margin-bottom:4px;">👁️ Sign in as Guest (Read-Only Records)</button>
                 <button class="auth-switch" onclick="showRegister()">Don't have an account? Register here</button>
                 <button class="auth-switch" onclick="showForgotPassword()" style="margin-top:4px;">🔑 Forgot Passkey?</button>
             </div>
@@ -976,10 +989,14 @@
                 <p class="auth-sub">Register for a new account (needs admin approval)</p>
                 <div class="auth-error" id="registerError"></div>
                 <input type="text" id="regUsername" placeholder="Username">
-                <select id="regRole">
+                <select id="regRole" onchange="toggleRegSchools()">
                     <option value="User">User</option>
                     <option value="Supervisor">Supervisor</option>
                 </select>
+                <div id="regSupervisorSchools" style="display:none;">
+                    <label style="font-size:0.8rem; color:var(--text-muted); display:block; text-align:left; margin-bottom:4px;">Schools/Offices to Supervise</label>
+                    <div id="regSchoolsCheckboxes" style="max-height:200px; overflow-y:auto; background:rgba(15,23,42,0.4); border:1px solid var(--glass-border); border-radius:var(--radius-md); padding:8px; margin-bottom:10px;"></div>
+                </div>
                 <input type="text" id="regSchool" placeholder="School/Office *" list="regSchoolsList" required>
                 <datalist id="regSchoolsList"></datalist>
                 <input type="email" id="regEmail" placeholder="Email (@deped.gov.ph) *" pattern=".+@deped\.gov\.ph" 
@@ -1084,7 +1101,16 @@
 
                     <div id="qr_result">
                         <div class="qr-success">🎉 Code Created Successfully!</div>
-                        <img id="codeImage" src="" alt="Code Result">
+                        <div style="display:flex; gap:20px; justify-content:center; flex-wrap:wrap; margin-bottom:10px;">
+                            <div style="text-align:center;">
+                                <img id="codeImageQR" src="" alt="QR Code" class="code-preview-img" style="max-height:200px;">
+                                <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">QR Code</div>
+                            </div>
+                            <div style="text-align:center;">
+                                <img id="codeImageBarcode" src="" alt="Barcode" class="code-preview-img" style="max-height:120px;">
+                                <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Barcode</div>
+                            </div>
+                        </div>
                         <p style="font-family:'JetBrains Mono', monospace; font-size:1.2rem; font-weight:700; margin-bottom:20px;" id="codeText"></p>
                         <div style="display:flex; gap:10px; flex-wrap:wrap;">
                             <button class="btn btn-add-sheet" onclick="addToPrintSheet()" style="flex:1;">➕ Add to Print Sheet</button>
@@ -1148,11 +1174,11 @@
                     <table id="recordsTable">
                         <thead>
                             <tr id="recordsTableHeaders">
-                                <th>Department</th>
                                 <th>School/Office</th>
                                 <th>Employee</th>
                                 <th>Barcode Code</th>
                                 <th>Doc Type</th>
+                                <th>Status</th>
                                 <th>Receiving Office</th>
                                 <th>Receiver</th>
                                 <th>Timestamp</th>
@@ -1446,21 +1472,50 @@
             }
         }
         
+        function showGuestSchoolPicker() {
+            var picker = document.getElementById('guestSchoolPicker');
+            if (picker.style.display === 'none') {
+                var sel = document.getElementById('guestSchoolSelect');
+                sel.innerHTML = '<option value="">-- Select School/Office --</option>';
+                fetch('/api/get_all_schools')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        (data.schools || []).forEach(function(s) {
+                            var opt = document.createElement('option');
+                            opt.value = s;
+                            opt.textContent = s;
+                            sel.appendChild(opt);
+                        });
+                    }
+                });
+                picker.style.display = 'block';
+            } else {
+                picker.style.display = 'none';
+            }
+        }
+
         function guestLogin() {
+            var school = document.getElementById('guestSchoolSelect').value.trim();
+            if (!school) {
+                showAlert('error', 'Please select a school/office to view.');
+                return;
+            }
             fetch('/api/guest_login', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'}
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({school_office: school})
             })
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'success') {
                     currentUserRole = 'Guest';
-                    currentSchool = '';
+                    currentSchool = school;
                     document.getElementById('mainContent').style.display = 'block';
                     document.getElementById('loginGate').style.display = 'none';
                     document.getElementById('navUsername').textContent = 'Guest';
                     document.getElementById('navRole').textContent = 'Guest';
-                    document.getElementById('navSchool').textContent = '· Read-Only';
+                    document.getElementById('navSchool').textContent = '· Viewing: ' + school;
                     
                     setupRoleBasedTabs('Guest');
                     loadRoutingRecords();
@@ -1625,6 +1680,33 @@
             });
         }
 
+        function toggleRegSchools() {
+            var role = document.getElementById('regRole').value;
+            var container = document.getElementById('regSupervisorSchools');
+            if (role === 'Supervisor') {
+                container.style.display = 'block';
+                fetch('/api/get_all_schools')
+                .then(r => r.json())
+                .then(data => {
+                    var box = document.getElementById('regSchoolsCheckboxes');
+                    box.innerHTML = '';
+                    (data.schools || []).forEach(function(s) {
+                        var label = document.createElement('label');
+                        label.style.cssText = 'display:block; padding:4px 8px; font-size:0.85rem; cursor:pointer;';
+                        var cb = document.createElement('input');
+                        cb.type = 'checkbox';
+                        cb.value = s;
+                        cb.style.marginRight = '6px';
+                        label.appendChild(cb);
+                        label.appendChild(document.createTextNode(s));
+                        box.appendChild(label);
+                    });
+                });
+            } else {
+                container.style.display = 'none';
+            }
+        }
+
         function submitRegistration() {
             const username = document.getElementById('regUsername').value.trim();
             const role = document.getElementById('regRole').value;
@@ -1650,10 +1732,16 @@
             }
             errEl.textContent = '';
 
+            var supervised_schools = '';
+            if (role === 'Supervisor') {
+                var checked = document.querySelectorAll('#regSchoolsCheckboxes input:checked');
+                supervised_schools = Array.from(checked).map(function(cb) { return cb.value; }).join(',');
+            }
+
             fetch('/api/register', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({username, role, school_office: school, email: email})
+                body: JSON.stringify({username, role, school_office: school, email: email, supervised_schools: supervised_schools})
             })
             .then(r => r.json())
             .then(data => {
@@ -1921,6 +2009,14 @@
 
         // ── USER ROLE: LOCK DEPT + SCHOOL TO ASSIGNED VALUES ─────────
         function setupUserLocks(role) {
+            if (role === 'Supervisor') {
+                // Show supervised schools info
+                var schoolInput = document.getElementById('schoolInput');
+                if (schoolInput) {
+                    schoolInput.placeholder = 'Select from your supervised schools...';
+                }
+                return;
+            }
             if (role !== 'User' || !currentSchool) return;
             // User role: lock dept + school to their assigned school
             // First find which department contains this school
@@ -2062,7 +2158,8 @@
                 if (data.status === 'success') {
                     currentCode = data.code_display;
                     currentImage = data.image_url;
-                    document.getElementById('codeImage').src = data.image_url;
+                    document.getElementById('codeImageQR').src = data.qr_image_url || data.image_url;
+                    document.getElementById('codeImageBarcode').src = data.barcode_image_url || data.image_url;
                     document.getElementById('codeText').innerText = 'CODE: ' + data.code_display;
                     document.getElementById('qr_result').classList.add('active');
                     showAlert('success', 'Document Barcode compiled successfully!');
@@ -2322,12 +2419,24 @@
                 }
 
                 const tr = document.createElement('tr');
+                const statusVal = r.status || 'for signature';
+                const statusOptions = ['for signature', 'with corrections', 'released'];
+                const statusDropdown = statusOptions.map(s =>
+                    `<option value="${s}" ${s === statusVal ? 'selected' : ''}>${s.charAt(0).toUpperCase() + s.slice(1)}</option>`
+                ).join('');
                 tr.innerHTML = `
-                    <td>${r.department || ""}</td>
                     <td>${r.school_office || ""}</td>
                     <td style="font-weight:700;">${r.employee || ""}</td>
                     <td><span class="table-code">${r.code || ""}</span></td>
                     <td>${r.doc_type || "-"}</td>
+                    <td>
+                        ${currentUserRole === 'Admin'
+                            ? `<select onchange="saveStatus(${r.id}, this.value)"
+                                    style="width: 140px; background: rgba(15, 23, 42, 0.4); border: 1px solid var(--glass-border); border-radius: 6px; padding: 4px 8px; color: var(--text-main); font-size: 0.8rem; cursor: pointer;">
+                                ${statusDropdown}
+                               </select>`
+                            : `<span class="table-status" style="display:inline-block; width:130px; text-align:center;">${statusVal.charAt(0).toUpperCase() + statusVal.slice(1)}</span>`}
+                    </td>
                     <td><span class="table-office-badge">${latestOffice || "-"}</span></td>
                     <td>${latestReceiver || "-"}</td>
                     <td class="table-time">${latestTs || "-"}</td>
@@ -2440,6 +2549,25 @@
             })
             .catch(err => {
                 showAlert('error', 'Error updating remarks: ' + err.message);
+            });
+        }
+
+        function saveStatus(recordId, value) {
+            fetch('/api/update_record/' + recordId, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ status: value })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showAlert('success', 'Status updated!');
+                } else {
+                    showAlert('error', 'Failed to update status: ' + data.message);
+                }
+            })
+            .catch(err => {
+                showAlert('error', 'Error updating status: ' + err.message);
             });
         }
 
