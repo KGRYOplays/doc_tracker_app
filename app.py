@@ -561,7 +561,7 @@ def index():
 
 @app.route('/scanner')
 def scanner_page():
-    return render_template('scanner.html')
+    return redirect(url_for('index'))
 
 
 # ─────────────────────────────────────────────

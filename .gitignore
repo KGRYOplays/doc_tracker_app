@@ -51,3 +51,6 @@ scan_log.xlsx
 # SQLite WAL journal files
 *.db-shm
 *.db-wal
+
+# Runtime lock files
+.gsheets_sync.lock
