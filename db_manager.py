@@ -114,12 +114,13 @@ def save_encrypted_setting(key, value):
 
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=5)
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
     conn = get_db_connection()
+    conn.execute("PRAGMA journal_mode=WAL")
     cursor = conn.cursor()
     
     # 1. Code Lookup Table
@@ -1027,6 +1028,93 @@ def push_row_to_gsheets(sheet_id, service_account_json, row_dict):
         print(f"Appended new Google Sheets row for {row_dict.get('employee')}")
 
 
+def batch_push_routing_rows(sheet_id, service_account_json, rows):
+    """Push multiple routing records in a single batch operation.
+    Reads the sheet once, then does one batch-update + one batch-append.
+    """
+    if not rows:
+        return
+    import gspread
+    client = _get_gspread_client(service_account_json)
+    sh = client.open_by_key(sheet_id)
+    ws = sh.worksheet("Routing Records")
+
+    target_headers = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks", "Status"]
+    for i in range(1, 11):
+        target_headers += [f"Receiving Office {i}", f"Receiver Name {i}", f"Timestamp {i}"]
+    end_col = _col_to_letter(len(target_headers))
+
+    # Read current sheet data once
+    all_values = ws.get_all_values()
+    existing_headers = all_values[0] if all_values else []
+    data_rows = all_values[1:] if len(all_values) > 1 else []
+
+    # Build lookup: (Code, Employee) -> row number (1-based)
+    existing = {}
+    for idx, row in enumerate(data_rows):
+        if len(row) >= 4:
+            cell_code = str(row[3]).strip().upper()
+            cell_emp  = str(row[2]).strip().lower()
+            if cell_code and cell_emp:
+                existing[(cell_code, cell_emp)] = idx + 2
+
+    # Expand headers if needed
+    if len(existing_headers) < len(target_headers):
+        ws.update(range_name=f"A1:{end_col}1", values=[target_headers])
+
+    # Pre-fetch doc_type for all codes
+    codes_to_lookup = list({str(r.get('code', '')).strip() for r in rows if r.get('code')})
+    code_doc_map = {}
+    if codes_to_lookup:
+        try:
+            conn = get_db_connection()
+            placeholders = ','.join(['?'] * len(codes_to_lookup))
+            _rows = conn.execute(
+                f"SELECT code, doc_type FROM code_lookup WHERE code IN ({placeholders})",
+                codes_to_lookup
+            ).fetchall()
+            code_doc_map = {r['code']: r['doc_type'] or '' for r in _rows}
+            conn.close()
+        except Exception:
+            pass
+
+    # Separate rows into updates vs appends
+    update_batch = []
+    append_batch = []
+
+    for r in rows:
+        doc_type = r.get('doc_type', '') or code_doc_map.get(r.get('code', ''), '')
+        row_data = [
+            r.get('department', ''),
+            r.get('school_office', ''),
+            r.get('employee', ''),
+            r.get('code', ''),
+            doc_type,
+            r.get('remarks', ''),
+            r.get('status', 'for signature'),
+        ]
+        for i in range(1, 11):
+            row_data.append(r.get(f'receiving_office_{i}') or "")
+            row_data.append(r.get(f'receiver_name_{i}') or "")
+            row_data.append(r.get(f'timestamp_{i}') or "")
+
+        code = str(r.get('code', '')).strip().upper()
+        emp  = str(r.get('employee', '')).strip().lower()
+        key  = (code, emp)
+
+        if key in existing:
+            update_batch.append({'range': f'A{existing[key]}:{end_col}{existing[key]}', 'values': [row_data]})
+        else:
+            append_batch.append(row_data)
+
+    if update_batch:
+        ws.batch_update(update_batch)
+    if append_batch:
+        ws.append_rows(append_batch, value_input_option='USER_ENTERED')
+
+    print(f"Batch pushed {len(rows)} routing rows ({len(update_batch)} updates, {len(append_batch)} appends)")
+
+
 def push_all_routing_to_gsheets(sheet_id, service_account_json, rows):
     """Batch write all routing records to Google Sheets in one fast operation."""
     import gspread
@@ -1161,23 +1249,37 @@ def start_gsheets_worker():
                     break
                 enabled  = get_setting('gsheets_enabled') == 'True'
                 sheet_id = get_setting('gsheets_id')
-                # Use decrypted credentials for the worker
                 creds    = get_decrypted_setting('gsheets_credentials')
                 if enabled and sheet_id and creds:
                     try:
-                        row_id = task.get('row_id')
-                        conn = get_db_connection()
-                        row = conn.execute("SELECT * FROM routing_records WHERE id = ?", (row_id,)).fetchone()
-                        conn.close()
-                        if row:
-                            # Use retry wrapper so transient GSheets errors don't silently drop data
-                            _gsheets_push_with_retry(push_row_to_gsheets, sheet_id, creds, dict(row))
+                        row_ids = task.get('row_ids')
+                        if row_ids:
+                            # Batch path — push all rows in one shot
+                            placeholders = ','.join(['?'] * len(row_ids))
+                            conn = get_db_connection()
+                            rows = conn.execute(
+                                f"SELECT * FROM routing_records WHERE id IN ({placeholders})",
+                                row_ids
+                            ).fetchall()
+                            conn.close()
+                            if rows:
+                                batch_rows = [dict(r) for r in rows]
+                                _gsheets_push_with_retry(batch_push_routing_rows, sheet_id, creds, batch_rows)
+                        else:
+                            # Per-row path (admin edits, low volume)
+                            row_id = task.get('row_id')
+                            if row_id:
+                                conn = get_db_connection()
+                                row = conn.execute("SELECT * FROM routing_records WHERE id = ?", (row_id,)).fetchone()
+                                conn.close()
+                                if row:
+                                    _gsheets_push_with_retry(push_row_to_gsheets, sheet_id, creds, dict(row))
                     except Exception as e:
                         print(f"Google Sheet sync worker error: {e}")
                 else:
                     print("Google Sheet Sync disabled. Skipping.")
                 gs_sync_queue.task_done()
-                time.sleep(1)  # Rate-limit protection
+                time.sleep(1)
             except Exception as ex:
                 print(f"Worker critical error: {ex}")
                 time.sleep(5)
@@ -1228,8 +1330,16 @@ def start_periodic_gsheets_pull():
 
 
 def queue_sync(row_id):
-    """Queue a row update to the background Google Sheets worker."""
+    """Queue a single row update to the background Google Sheets worker."""
     gs_sync_queue.put({"row_id": row_id})
+
+
+def queue_sync_batch(row_ids):
+    """Queue a batch of row updates to the background Google Sheets worker.
+    All rows are fetched and pushed in a single batch operation.
+    """
+    if row_ids:
+        gs_sync_queue.put({"row_ids": row_ids})
 
 
 def bulk_sync_to_gsheets():

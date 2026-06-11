@@ -756,7 +756,7 @@ def get_user_profile():
 def admin_get_users():
     try:
         conn = db_manager.get_db_connection()
-        rows = conn.execute("SELECT username, role, status, school_office, supervised_schools FROM users").fetchall()
+        rows = conn.execute("SELECT username, role, status, school_office, supervised_schools FROM users WHERE username != 'admin'").fetchall()
         conn.close()
         users = [dict(r) for r in rows]
         return jsonify({'status': 'success', 'users': users})
@@ -862,6 +862,69 @@ def change_password():
         return jsonify({'status': 'success', 'message': 'Password changed successfully!'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/change_email', methods=['POST'])
+@require_login
+def change_email():
+    try:
+        data = request.json
+        current_password = data.get('current_password', '').strip()
+        new_email = data.get('new_email', '').strip().lower()
+        username = session['username']
+
+        if not current_password or not new_email:
+            return jsonify({'status': 'error', 'message': 'Current password and new email are required.'}), 400
+
+        if not new_email.endswith('@deped.gov.ph'):
+            return jsonify({'status': 'error', 'message': 'Only @deped.gov.ph email addresses are allowed.'}), 400
+
+        conn = db_manager.get_db_connection()
+        user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+
+        if not user:
+            conn.close()
+            return jsonify({'status': 'error', 'message': 'User not found.'}), 404
+
+        cur_hash = hashlib.sha256(current_password.encode()).hexdigest()
+        if user['password_hash'] != cur_hash:
+            conn.close()
+            return jsonify({'status': 'error', 'message': 'Current password is incorrect.'}), 400
+
+        conn.execute("UPDATE users SET email = ? WHERE username = ?", (new_email, username))
+        conn.commit()
+        conn.close()
+
+        session['email'] = new_email
+
+        return jsonify({'status': 'success', 'message': 'Email changed successfully!'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/update_supervised_schools', methods=['POST'])
+@require_login
+def update_supervised_schools():
+    try:
+        user_role = session.get('user_role', '')
+        if user_role != 'Supervisor':
+            return jsonify({'status': 'error', 'message': 'Only supervisors can manage supervised schools.'}), 403
+
+        data = request.json
+        schools = data.get('schools', '').strip()
+        username = session['username']
+
+        conn = db_manager.get_db_connection()
+        conn.execute("UPDATE users SET supervised_schools = ? WHERE username = ?", (schools, username))
+        conn.commit()
+        conn.close()
+
+        session['supervised_schools'] = schools
+
+        return jsonify({'status': 'success', 'message': 'Supervised schools updated successfully!'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 
 @app.route('/api/admin/reset_passkey', methods=['POST'])
 @require_admin
@@ -1380,8 +1443,7 @@ def log_scan():
 
             conn.close()
 
-            for r_id in updated_rows_ids:
-                db_manager.queue_sync(r_id)
+            db_manager.queue_sync_batch(updated_rows_ids)
             db_manager.trigger_excel_export()
 
             return jsonify({
@@ -1602,7 +1664,7 @@ def delete_record(record_id):
 #  SETTINGS (Admin only)
 # ─────────────────────────────────────────────
 @app.route('/api/get_settings', methods=['GET'])
-@require_admin
+@require_login
 def get_settings():
     try:
         # Never expose the actual credentials to the frontend
@@ -1610,14 +1672,16 @@ def get_settings():
         # Show whether credentials come from environment variables (persistent) or SQLite (wiped on Render)
         creds_from_env = bool(os.environ.get('GSHEETS_CREDENTIALS'))
         id_from_env = bool(os.environ.get('GSHEETS_ID'))
+        user_role = session.get('user_role', '')
+        is_admin = user_role == 'Admin'
         return jsonify({
             'status':               'success',
             'gsheets_enabled':      db_manager.get_setting('gsheets_enabled', 'False') == 'True',
             'gsheets_id':           db_manager.get_setting('gsheets_id', ''),
             'gsheets_configured':   has_creds,
             'gsheets_from_env':     creds_from_env and id_from_env,  # True = survives Render wipes
-            'scanner_pin':          db_manager.get_setting('scanner_pin', 'scanner123'),
-            'admin_pin':            db_manager.get_setting('admin_pin', 'admin123'),
+            'scanner_pin':          db_manager.get_setting('scanner_pin', 'scanner123') if is_admin else '',
+            'admin_pin':            db_manager.get_setting('admin_pin', 'admin123') if is_admin else '',
             'gsheets_pull_interval': db_manager.get_setting('gsheets_pull_interval', '5'),
             'logo_url': db_manager.get_setting('logo_url', ''),
             'header_line_1': db_manager.get_setting('header_line_1', 'Republic of the Philippines'),
@@ -1731,7 +1795,7 @@ def remove_font():
 
 
 @app.route('/api/upload_title_bg', methods=['POST'])
-@require_admin
+@require_login
 def upload_title_bg():
     try:
         if request.is_json and request.json.get('remove'):
@@ -1921,8 +1985,7 @@ def reconcile_employee_names():
         conn = db_manager.get_db_connection()
         all_ids = conn.execute("SELECT id FROM routing_records").fetchall()
         conn.close()
-        for r in all_ids:
-            db_manager.queue_sync(r['id'])
+        db_manager.queue_sync_batch([r['id'] for r in all_ids])
         return jsonify({'status': 'success', 'message': msg, 'rewritten': rewritten, 'total': total, 'samples': samples})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
