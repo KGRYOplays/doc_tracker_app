@@ -110,15 +110,25 @@ def save_code_lookup(code, department, school, employees, doc_type):
             db_manager.push_code_to_gsheets, sheet_id, creds, code_dict
         )
     
-    # Then update local SQLite cache for fast reads
-    conn = db_manager.get_db_connection()
-    conn.execute(
-        "INSERT OR REPLACE INTO code_lookup (code, department, school_office, employees, doc_type, generated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (code, department, school, '|||'.join(employees), doc_type, gen_time)
-    )
-    conn.commit()
-    conn.close()
+    # Then update local SQLite cache for fast reads (with retry on lock)
+    import time as _time
+    import sqlite3 as _sqlite3
+    for _attempt in range(3):
+        try:
+            conn = db_manager.get_db_connection()
+            conn.execute(
+                "INSERT OR REPLACE INTO code_lookup (code, department, school_office, employees, doc_type, generated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (code, department, school, '|||'.join(employees), doc_type, gen_time)
+            )
+            conn.commit()
+            conn.close()
+            break
+        except _sqlite3.OperationalError as _e:
+            if 'locked' in str(_e) and _attempt < 2:
+                _time.sleep(1 * (_attempt + 1))
+                continue
+            raise
         
     db_manager.trigger_excel_export()
 

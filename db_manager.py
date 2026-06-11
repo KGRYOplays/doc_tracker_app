@@ -114,8 +114,11 @@ def save_encrypted_setting(key, value):
 
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_FILE, timeout=5)
+    conn = sqlite3.connect(DB_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 def init_db():
@@ -1744,9 +1747,49 @@ def _load_shs_schools_from_excel(shs_schools):
         pass
 
 
+# Cross-platform file lock for DB sync operations.
+# Prevents multiple gunicorn workers from running pull_all_from_gsheets() concurrently.
+_LOCK_FILE = os.path.join(os.path.dirname(DB_FILE) or '.', '.gsheets_sync.lock')
+
+def _acquire_sync_lock():
+    fd = None
+    try:
+        fd = os.open(_LOCK_FILE, os.O_CREAT | os.O_RDWR | os.O_TRUNC)
+        if os.name == 'nt':
+            import msvcrt
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+    except (IOError, OSError, ImportError, BlockingIOError):
+        if fd is not None:
+            try: os.close(fd)
+            except: pass
+        return None
+
+def _release_sync_lock(fd):
+    if fd is None:
+        return
+    try:
+        if os.name == 'nt':
+            import msvcrt
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+    except Exception:
+        pass
+    try:
+        os.remove(_LOCK_FILE)
+    except Exception:
+        pass
+
 def pull_all_from_gsheets(sheet_id=None, creds=None):
     """Restore all tables from Google Sheets into SQLite.
     This is called on every startup so SQLite always reflects GSheets truth.
+    Uses a cross-process file lock so only one gunicorn worker pulls at a time.
     Returns (routing_record_count, error_list)."""
     if not sheet_id or not creds:
         enabled = get_setting('gsheets_enabled') == 'True'
@@ -1754,6 +1797,12 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
         sheet_id = get_setting('gsheets_id')
         creds = get_decrypted_setting('gsheets_credentials')
         if not sheet_id or not creds: return 0, ["Missing GSheets credentials."]
+    
+    # Only one gunicorn worker pulls at a time; skip if another worker is already syncing
+    lock_fd = _acquire_sync_lock()
+    if lock_fd is None:
+        print("[GSheets pull] Another worker is already syncing — skipping this pull.")
+        return 0, ["Sync already in progress by another worker."]
         
     import gspread
     from google.oauth2.service_account import Credentials
@@ -1884,6 +1933,8 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
     except Exception as e:
         print(f"pull_all_from_gsheets error: {e}")
         return 0, [str(e)]
+    finally:
+        _release_sync_lock(lock_fd)
 
 def push_code_to_gsheets(sheet_id, service_account_json, code_dict):
     """Upsert a code_lookup entry into the 'Code Lookup' GSheets worksheet."""
