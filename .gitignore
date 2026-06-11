@@ -42,3 +42,12 @@ local db/
 test_*.db
 test_*.xlsx
 static/sync_backup_*.json
+
+# Generated exports
+code_lookup.xlsx
+routing_record.xlsx
+scan_log.xlsx
+
+# SQLite WAL journal files
+*.db-shm
+*.db-wal
