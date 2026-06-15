@@ -126,7 +126,7 @@ def _check_maintenance():
     If blocked, the caller should return the message as a 403 response."""
     if db_manager.get_setting('maintenance_mode') == 'True':
         role = session.get('user_role', '')
-        if role != 'admin':
+        if role.lower() != 'admin':
             return True, 'System is in maintenance mode. Only admins can perform this action.'
     return False, None
 
@@ -2688,7 +2688,7 @@ def maintenance_toggle():
         new_val = 'False' if current == 'True' else 'True'
         
         if new_val == 'False' and data.get('pull_gsheets'):
-            result, errors = db_manager.pull_all_from_gsheets(skip_push_first=True)
+            result, errors = db_manager.pull_all_from_gsheets()
             if errors:
                 return jsonify({'status': 'error', 'message': f'GSheets import failed: {errors[0]}'}), 500
             db_manager.update_last_pull_info("ok", "GSheets imported before exiting maintenance mode.")
@@ -2718,7 +2718,7 @@ def maintenance_status():
     role = session.get('user_role', '')
     return jsonify({
         'maintenance_mode': enabled,
-        'is_admin': role == 'admin'
+        'is_admin': role.lower() == 'admin'
     })
 
 

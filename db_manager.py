@@ -410,6 +410,35 @@ def init_db():
     # Run data migrations (if old excel files exist and db is empty)
     migrate_from_excel()
     
+    # Startup recovery: on a non-wiped restart, push any unsynced local data
+    # to GSheets before pulling fresh state. Prevents data loss when
+    # pull_all_from_gsheets() wipes and rebuilds SQLite from GSheets.
+    try:
+        startup_enabled = get_setting('gsheets_enabled') == 'True'
+        startup_sheet_id = get_setting('gsheets_id')
+        startup_creds = get_decrypted_setting('gsheets_credentials')
+        if startup_enabled and startup_sheet_id and startup_creds:
+            startup_conn = get_db_connection()
+            startup_local_count = startup_conn.execute("SELECT COUNT(*) FROM routing_records").fetchone()[0]
+            if startup_local_count > 0:
+                print(f"Startup: SQLite has {startup_local_count} routing records — pushing to GSheets before refresh.")
+                try:
+                    startup_local_rows = startup_conn.execute("SELECT * FROM routing_records").fetchall()
+                    if startup_local_rows:
+                        _gsheets_push_with_retry(push_all_routing_to_gsheets, startup_sheet_id, startup_creds, startup_local_rows)
+                    startup_local_codes = startup_conn.execute("SELECT * FROM code_lookup").fetchall()
+                    if startup_local_codes:
+                        _gsheets_push_with_retry(push_all_codes_to_gsheets, startup_sheet_id, startup_creds, startup_local_codes)
+                    startup_local_users = startup_conn.execute("SELECT * FROM users").fetchall()
+                    if startup_local_users:
+                        _gsheets_push_with_retry(push_all_users_to_gsheets, startup_sheet_id, startup_creds, startup_local_users)
+                    print("Startup: local data pushed to GSheets successfully.")
+                except Exception as pe:
+                    print(f"Startup: warning — could not push local data: {pe}")
+            startup_conn.close()
+    except Exception as e:
+        print(f"Startup: warning — could not check local data: {e}")
+
     # Always restore from GSheets on startup — this is what survives Render wipes.
     # We unconditionally overwrite SQLite with whatever is in GSheets so that
     # every restart begins with the authoritative cloud state.
@@ -1172,7 +1201,17 @@ def batch_push_routing_rows(sheet_id, service_account_json, rows):
         key  = (code, emp)
 
         if key in existing:
-            update_batch.append({'range': f'A{existing[key]}:{end_col}{existing[key]}', 'values': [row_data]})
+            # Only update scan columns (Receiving Office N → Timestamp N)
+            # to preserve manual edits to non-scan fields made directly in GSheets.
+            scan_data = []
+            for i in range(1, 11):
+                scan_data.append(r.get(f'receiving_office_{i}') or "")
+                scan_data.append(r.get(f'receiver_name_{i}') or "")
+                scan_data.append(r.get(f'timestamp_{i}') or "")
+            update_batch.append({
+                'range': f'I{existing[key]}:{end_col}{existing[key]}',
+                'values': [scan_data]
+            })
         else:
             append_batch.append(row_data)
 
@@ -2002,13 +2041,11 @@ def _release_sync_lock(fd):
     except Exception:
         pass
 
-def pull_all_from_gsheets(sheet_id=None, creds=None, skip_push_first=False):
-    """Restore all tables from Google Sheets into SQLite.
-    On startup, if SQLite already has data (non-Render restart), push local data
-    to GSheets first so any unsynced rows from the async queue are not lost.
+def pull_all_from_gsheets(sheet_id=None, creds=None):
+    """Restore all tables from Google Sheets into SQLite (one-way pull).
+    Does NOT push local data first — the caller is responsible for that
+    (e.g. init_db() handles startup recovery before calling this).
     Uses a cross-process file lock so only one gunicorn worker pulls at a time.
-    Pass skip_push_first=True (e.g. during maintenance mode import) to skip the
-    startup recovery push — only pull GSheets → SQLite.
     Returns (routing_record_count, error_list)."""
     if not sheet_id or not creds:
         enabled = get_setting('gsheets_enabled') == 'True'
@@ -2036,25 +2073,6 @@ def pull_all_from_gsheets(sheet_id=None, creds=None, skip_push_first=False):
         
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # ── 0. Startup recovery: if SQLite has data, push to GSheets first ──
-        if not skip_push_first:
-            local_count = cursor.execute("SELECT COUNT(*) FROM routing_records").fetchone()[0]
-            if local_count > 0:
-                print(f"[GSheets pull] SQLite has {local_count} routing records — pushing local data to GSheets before refresh.")
-                try:
-                    local_rows = cursor.execute("SELECT * FROM routing_records").fetchall()
-                    if local_rows:
-                        _gsheets_push_with_retry(push_all_routing_to_gsheets, sheet_id, creds, local_rows)
-                    local_codes = cursor.execute("SELECT * FROM code_lookup").fetchall()
-                    if local_codes:
-                        _gsheets_push_with_retry(push_all_codes_to_gsheets, sheet_id, creds, local_codes)
-                    local_users = cursor.execute("SELECT * FROM users").fetchall()
-                    if local_users:
-                        _gsheets_push_with_retry(push_all_users_to_gsheets, sheet_id, creds, local_users)
-                    print("[GSheets pull] Local data pushed to GSheets successfully.")
-                except Exception as pe:
-                    print(f"[GSheets pull] Warning: could not push local data before pull: {pe}")
         
         count = 0
         
