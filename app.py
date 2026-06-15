@@ -2688,10 +2688,13 @@ def maintenance_toggle():
         new_val = 'False' if current == 'True' else 'True'
         
         if new_val == 'False' and data.get('pull_gsheets'):
-            result, errors = db_manager.pull_all_from_gsheets()
+            result, errors = db_manager.pull_all_from_gsheets(skip_push_first=True)
             if errors:
                 return jsonify({'status': 'error', 'message': f'GSheets import failed: {errors[0]}'}), 500
             db_manager.update_last_pull_info("ok", "GSheets imported before exiting maintenance mode.")
+        
+        if new_val == 'False':
+            db_manager.reset_periodic_pull_timer()
         
         db_manager.save_setting('maintenance_mode', new_val)
         

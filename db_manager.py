@@ -13,6 +13,9 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 # Files
 DB_FILE = 'app.db'
+
+# Periodic pull timer — reset to 0 so first pull fires immediately on startup
+_periodic_last_run = 0
 MASTER_DB = 'master_db.xlsx'
 CODE_LOOKUP_EXCEL = 'code_lookup.xlsx'
 ROUTING_RECORD_EXCEL = 'routing_record.xlsx'
@@ -1366,13 +1369,16 @@ def start_gsheets_worker():
 
 def start_periodic_gsheets_pull():
     """Start a background daemon thread that calls pull_all_from_gsheets()
-    on a configurable interval (default: 5 minutes, minimum: 1 minute).
+    on a configurable interval (default: 15 minutes, minimum: 1 minute).
     The interval is read from the 'gsheets_pull_interval' setting at the
     start of each cycle so it can be changed at runtime without a restart.
+    Uses a short-sleep loop so the timer can be reset externally (e.g. after
+    maintenance mode ends) without waiting for the full interval to elapse.
     """
-    DEFAULT_INTERVAL = 5
+    DEFAULT_INTERVAL = 15
 
     def _worker():
+        global _periodic_last_run
         while True:
             try:
                 raw = get_setting('gsheets_pull_interval', str(DEFAULT_INTERVAL))
@@ -1380,35 +1386,47 @@ def start_periodic_gsheets_pull():
             except (ValueError, TypeError):
                 minutes = DEFAULT_INTERVAL
 
-            time.sleep(minutes * 60)
-
-            # In maintenance mode, skip the periodic pull
+            # In maintenance mode, skip pull but keep looping (timer does not advance)
             if get_setting('maintenance_mode') == 'True':
                 update_last_pull_info("paused", "Maintenance mode active — periodic pull paused.")
-                print(f"[Periodic Pull] Maintenance mode active — skipping pull.")
+                time.sleep(5)
                 continue
 
-            try:
-                update_last_pull_info("syncing", "Refreshing SQLite from Google Sheets...")
-                print(f"[Periodic Pull] Refreshing SQLite from Google Sheets...")
-                count, errors = pull_all_from_gsheets()
-                if errors:
-                    for e in errors:
-                        print(f"[Periodic Pull] Warning: {e}")
-                if count is not None:
-                    update_last_pull_info("ok", f"Refreshed {count} routing records from Google Sheets.")
-                    print(f"[Periodic Pull] OK — {count} routing records refreshed.")
-                else:
-                    update_last_pull_info("ok", "Periodic pull completed.")
-                    print(f"[Periodic Pull] OK (no routing records count).")
-            except Exception as e:
-                update_last_pull_info("error", f"Periodic pull failed: {e}")
-                print(f"[Periodic Pull] Error: {e}")
-                time.sleep(30)
+            # Check if enough time has elapsed since the last pull
+            if time.time() - _periodic_last_run >= minutes * 60:
+                try:
+                    update_last_pull_info("syncing", "Refreshing SQLite from Google Sheets...")
+                    print(f"[Periodic Pull] Refreshing SQLite from Google Sheets...")
+                    count, errors = pull_all_from_gsheets()
+                    if errors:
+                        for e in errors:
+                            print(f"[Periodic Pull] Warning: {e}")
+                    if count is not None:
+                        update_last_pull_info("ok", f"Refreshed {count} routing records from Google Sheets.")
+                        print(f"[Periodic Pull] OK — {count} routing records refreshed.")
+                    else:
+                        update_last_pull_info("ok", "Periodic pull completed.")
+                        print(f"[Periodic Pull] OK (no routing records count).")
+                except Exception as e:
+                    update_last_pull_info("error", f"Periodic pull failed: {e}")
+                    print(f"[Periodic Pull] Error: {e}")
+                    time.sleep(30)
+
+                _periodic_last_run = time.time()
+
+            time.sleep(5)
 
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
     print(f"Periodic GSheets pull worker started (interval: {DEFAULT_INTERVAL} min, configurable via 'gsheets_pull_interval' setting).")
+
+
+def reset_periodic_pull_timer():
+    """Reset the periodic pull countdown so the next automatic pull happens
+    after a full interval (default 15 min) from now. Used when exiting
+    maintenance mode so the timer starts fresh."""
+    global _periodic_last_run
+    _periodic_last_run = time.time()
 
 
 def queue_sync(row_id):
@@ -1984,11 +2002,13 @@ def _release_sync_lock(fd):
     except Exception:
         pass
 
-def pull_all_from_gsheets(sheet_id=None, creds=None):
+def pull_all_from_gsheets(sheet_id=None, creds=None, skip_push_first=False):
     """Restore all tables from Google Sheets into SQLite.
     On startup, if SQLite already has data (non-Render restart), push local data
     to GSheets first so any unsynced rows from the async queue are not lost.
     Uses a cross-process file lock so only one gunicorn worker pulls at a time.
+    Pass skip_push_first=True (e.g. during maintenance mode import) to skip the
+    startup recovery push — only pull GSheets → SQLite.
     Returns (routing_record_count, error_list)."""
     if not sheet_id or not creds:
         enabled = get_setting('gsheets_enabled') == 'True'
@@ -2018,22 +2038,23 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
         cursor = conn.cursor()
         
         # ── 0. Startup recovery: if SQLite has data, push to GSheets first ──
-        local_count = cursor.execute("SELECT COUNT(*) FROM routing_records").fetchone()[0]
-        if local_count > 0:
-            print(f"[GSheets pull] SQLite has {local_count} routing records — pushing local data to GSheets before refresh.")
-            try:
-                local_rows = cursor.execute("SELECT * FROM routing_records").fetchall()
-                if local_rows:
-                    _gsheets_push_with_retry(push_all_routing_to_gsheets, sheet_id, creds, local_rows)
-                local_codes = cursor.execute("SELECT * FROM code_lookup").fetchall()
-                if local_codes:
-                    _gsheets_push_with_retry(push_all_codes_to_gsheets, sheet_id, creds, local_codes)
-                local_users = cursor.execute("SELECT * FROM users").fetchall()
-                if local_users:
-                    _gsheets_push_with_retry(push_all_users_to_gsheets, sheet_id, creds, local_users)
-                print("[GSheets pull] Local data pushed to GSheets successfully.")
-            except Exception as pe:
-                print(f"[GSheets pull] Warning: could not push local data before pull: {pe}")
+        if not skip_push_first:
+            local_count = cursor.execute("SELECT COUNT(*) FROM routing_records").fetchone()[0]
+            if local_count > 0:
+                print(f"[GSheets pull] SQLite has {local_count} routing records — pushing local data to GSheets before refresh.")
+                try:
+                    local_rows = cursor.execute("SELECT * FROM routing_records").fetchall()
+                    if local_rows:
+                        _gsheets_push_with_retry(push_all_routing_to_gsheets, sheet_id, creds, local_rows)
+                    local_codes = cursor.execute("SELECT * FROM code_lookup").fetchall()
+                    if local_codes:
+                        _gsheets_push_with_retry(push_all_codes_to_gsheets, sheet_id, creds, local_codes)
+                    local_users = cursor.execute("SELECT * FROM users").fetchall()
+                    if local_users:
+                        _gsheets_push_with_retry(push_all_users_to_gsheets, sheet_id, creds, local_users)
+                    print("[GSheets pull] Local data pushed to GSheets successfully.")
+                except Exception as pe:
+                    print(f"[GSheets pull] Warning: could not push local data before pull: {pe}")
         
         count = 0
         
