@@ -110,7 +110,10 @@ def generate_6_digit_code():
 
 
 def _get_gsheets_config():
-    """Return (is_enabled, sheet_id, creds) tuple. Creds are decrypted."""
+    """Return (is_enabled, sheet_id, creds) tuple. Creds are decrypted.
+    Returns (False, None, None) during maintenance mode to block sync pushes."""
+    if db_manager.get_setting('maintenance_mode') == 'True':
+        return False, None, None
     enabled = db_manager.get_setting('gsheets_enabled') == 'True'
     sheet_id = db_manager.get_setting('gsheets_id')
     creds = db_manager.get_decrypted_setting('gsheets_credentials')
@@ -2606,6 +2609,8 @@ def flush_sync():
 def bulk_sync():
     """Push ALL existing data (routing records, codes, users, master_data) to Google Sheets at once."""
     try:
+        if db_manager.get_setting('maintenance_mode') == 'True':
+            return jsonify({'status': 'error', 'message': 'Bulk sync is disabled during maintenance mode.'}), 409
         count, errors = db_manager.bulk_sync_to_gsheets()
         if errors and count == 0:
             return jsonify({
@@ -2632,6 +2637,8 @@ def pull_from_gsheets():
     """Manually trigger a full Google Sheets → SQLite restore.
     Useful for recovering data after a wipe or for debugging sync issues."""
     try:
+        if db_manager.get_setting('maintenance_mode') == 'True':
+            return jsonify({'status': 'error', 'message': 'Use "Turn Off Maintenance → Import Changes" instead. Direct pull is blocked during maintenance.'}), 409
         count, errors = db_manager.pull_all_from_gsheets()
         if errors and count == 0:
             return jsonify({
@@ -2671,10 +2678,21 @@ def sync_reference():
 def maintenance_toggle():
     """Toggle maintenance mode on/off. When ON, only admins can scan/generate,
     and the periodic pull + background sync worker are paused so the admin
-    can safely edit data in Google Sheets without surprise syncs."""
+    can safely edit data in Google Sheets without surprise syncs.
+    
+    When turning OFF, the request may include {"pull_gsheets": true} to first
+    pull GSheets → SQLite (importing any edits made directly in GSheets)."""
     try:
+        data = request.get_json(silent=True) or {}
         current = db_manager.get_setting('maintenance_mode', 'False')
         new_val = 'False' if current == 'True' else 'True'
+        
+        if new_val == 'False' and data.get('pull_gsheets'):
+            result, errors = db_manager.pull_all_from_gsheets()
+            if errors:
+                return jsonify({'status': 'error', 'message': f'GSheets import failed: {errors[0]}'}), 500
+            db_manager.update_last_pull_info("ok", "GSheets imported before exiting maintenance mode.")
+        
         db_manager.save_setting('maintenance_mode', new_val)
         
         if new_val == 'True':
@@ -2728,6 +2746,9 @@ def migrate_master_to_gsheets():
     """Push all 3 raw sheets from master_db.xlsx to Google Sheets as separate worksheets
     ('Master Data Sheet1', 'Master Data Sheet2', 'Master Data Sheet3')."""
     try:
+        if db_manager.get_setting('maintenance_mode') == 'True':
+            return jsonify({'status': 'error', 'message': 'Cannot migrate during maintenance mode.'}), 409
+
         enabled  = db_manager.get_setting('gsheets_enabled') == 'True'
         sheet_id = db_manager.get_setting('gsheets_id')
         creds    = db_manager.get_decrypted_setting('gsheets_credentials')

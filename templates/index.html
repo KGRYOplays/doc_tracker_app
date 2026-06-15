@@ -2612,6 +2612,26 @@
         </div>
     </div>
 
+    <!-- Maintenance mode turn-off confirmation modal -->
+    <div id="maintenanceConfirmModal" class="maintenance-lock-overlay" style="display:none;">
+        <div class="maintenance-lock-content" style="max-width:480px;">
+            <div class="lock-icon" style="font-size:2.5rem;">🔧</div>
+            <h2>Disable Maintenance Mode?</h2>
+            <p style="margin-bottom:8px; color:var(--text-muted); font-size:0.9rem;">
+                Did you make changes directly in Google Sheets while maintenance was on?
+            </p>
+            <p style="margin-bottom:20px; color:var(--text-muted); font-size:0.85rem;">
+                <strong>Import Changes</strong> pulls your GSheets edits into the app database.
+                <strong>Skip Import</strong> discards GSheets edits and uses the app data as-is.
+            </p>
+            <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
+                <button class="btn btn-primary" onclick="confirmMaintenanceOff(true)" style="padding:12px 24px;">📥 Import & Turn Off</button>
+                <button class="btn btn-secondary" onclick="confirmMaintenanceOff(false)" style="padding:12px 24px;">⏭️ Skip Import</button>
+                <button class="btn btn-secondary" onclick="cancelMaintenanceOff()" style="padding:12px 24px;">✖️ Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Sync-in-progress modal -->
     <div id="syncModal" class="maintenance-lock-overlay" style="display:none;">
         <div class="maintenance-lock-content">
@@ -5567,13 +5587,19 @@
 
         function toggleMaintenanceMode() {
             var toggle = document.getElementById('maintenanceToggle');
-            var wasLoading = toggle.disabled;
-            if (wasLoading) return;
+            if (toggle.disabled) return;
+            // toggle.checked is already flipped by the browser; if turning OFF, show confirmation
+            if (!toggle.checked) {
+                toggle.checked = true;  // re-check immediately so UI stays consistent
+                document.getElementById('maintenanceConfirmModal').style.display = 'flex';
+                return;
+            }
+            // Turning ON — simple toggle
             toggle.disabled = true;
-
             fetch('/api/admin/maintenance/toggle', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'}
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({})
             })
             .then(function(r) { return r.json(); })
             .then(function(data) {
@@ -5582,15 +5608,49 @@
                     checkMaintenanceStatus();
                     showToast('success', data.message);
                 } else {
-                    toggle.checked = !toggle.checked;
-                    showToast('error', data.message || 'Failed to toggle maintenance mode.');
+                    toggle.checked = false;
+                    showToast('error', data.message || 'Failed to enable maintenance mode.');
                 }
             })
             .catch(function() {
                 toggle.disabled = false;
-                toggle.checked = !toggle.checked;
-                showToast('error', 'Network error toggling maintenance mode.');
+                toggle.checked = false;
+                showToast('error', 'Network error enabling maintenance mode.');
             });
+        }
+
+        function confirmMaintenanceOff(pullGsheets) {
+            var toggle = document.getElementById('maintenanceToggle');
+            toggle.disabled = true;
+            document.getElementById('maintenanceConfirmModal').style.display = 'none';
+
+            fetch('/api/admin/maintenance/toggle', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ pull_gsheets: pullGsheets })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                toggle.disabled = false;
+                if (data.status === 'success') {
+                    checkMaintenanceStatus();
+                    showToast('success', data.message);
+                } else {
+                    toggle.checked = true;
+                    showToast('error', data.message || 'Failed to disable maintenance mode.');
+                }
+            })
+            .catch(function() {
+                toggle.disabled = false;
+                toggle.checked = true;
+                showToast('error', 'Network error disabling maintenance mode.');
+            });
+        }
+
+        function cancelMaintenanceOff() {
+            var toggle = document.getElementById('maintenanceToggle');
+            toggle.checked = true;  // keep maintenance ON
+            document.getElementById('maintenanceConfirmModal').style.display = 'none';
         }
 
         function checkMaintenanceStatus() {
