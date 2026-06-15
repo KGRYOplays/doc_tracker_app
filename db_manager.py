@@ -1283,7 +1283,7 @@ def push_all_users_to_gsheets(sheet_id, service_account_json, rows):
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="Users", rows=max(100, len(rows) + 10), cols=10)
     
-    headers = ["Username", "Password Hash", "Role", "Status", "School/Office", "Email", "Requires Password Change", "Supervised Schools"]
+    headers = ["Username", "Password Hash", "Role", "Status", "School/Office", "Email", "Requires Password Change", "Supervised Schools", "Employee Name"]
     rows_to_write = [headers]
     for r in rows:
         row_dict = dict(r)
@@ -1296,10 +1296,11 @@ def push_all_users_to_gsheets(sheet_id, service_account_json, rows):
             row_dict.get('email', ''),
             row_dict.get('requires_password_change', 0),
             row_dict.get('supervised_schools', ''),
+            row_dict.get('employee_name', ''),
         ])
         
     ws.clear()
-    end_col = 'H'
+    end_col = 'I'
     ws.update(range_name=f"A1:{end_col}{len(rows_to_write)}", values=rows_to_write)
     ws.format(f"A1:{end_col}1", {"backgroundColor": {"red": 0.05, "green": 0.25, "blue": 0.45}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}})
     ws.freeze(rows=1)
@@ -1314,6 +1315,14 @@ def start_gsheets_worker():
                 task = gs_sync_queue.get()
                 if task is None:
                     break
+
+                # In maintenance mode, skip all background pushes
+                if get_setting('maintenance_mode') == 'True':
+                    print("Maintenance mode — background sync paused.")
+                    gs_sync_queue.task_done()
+                    time.sleep(5)
+                    continue
+
                 enabled  = get_setting('gsheets_enabled') == 'True'
                 sheet_id = get_setting('gsheets_id')
                 creds    = get_decrypted_setting('gsheets_credentials')
@@ -1372,6 +1381,12 @@ def start_periodic_gsheets_pull():
                 minutes = DEFAULT_INTERVAL
 
             time.sleep(minutes * 60)
+
+            # In maintenance mode, skip the periodic pull
+            if get_setting('maintenance_mode') == 'True':
+                update_last_pull_info("paused", "Maintenance mode active — periodic pull paused.")
+                print(f"[Periodic Pull] Maintenance mode active — skipping pull.")
+                continue
 
             try:
                 update_last_pull_info("syncing", "Refreshing SQLite from Google Sheets...")
@@ -2086,20 +2101,21 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
                 email = str(row.get('Email', '')).strip()
                 requires_pw_change = int(row.get('Requires Password Change', 0))
                 supervised_schools = str(row.get('Supervised Schools', '')).strip()
+                employee_name = str(row.get('Employee Name', '')).strip()
                 cursor.execute(
                     "INSERT OR REPLACE INTO users "
-                    "(username, password_hash, role, status, school_office, email, requires_password_change, supervised_schools) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (username, pw_hash, role, status, school_office, email, requires_pw_change, supervised_schools)
+                    "(username, password_hash, role, status, school_office, email, requires_password_change, supervised_schools, employee_name) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (username, pw_hash, role, status, school_office, email, requires_pw_change, supervised_schools, employee_name)
                 )
             # Ensure admin account always exists even if missing from GSheets
             if not cursor.execute("SELECT username FROM users WHERE username = 'admin'").fetchone():
                 import hashlib as _hashlib, secrets as _secrets
                 fallback_hash = admin_row['password_hash'] if admin_row else _hashlib.sha256(_secrets.token_urlsafe(12).encode()).hexdigest()
                 cursor.execute(
-                    "INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change, supervised_schools) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    ('admin', fallback_hash, 'Admin', 'Approved', '', 'admin@deped.gov.ph', 0, '')
+                    "INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change, supervised_schools, employee_name) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    ('admin', fallback_hash, 'Admin', 'Approved', '', 'admin@deped.gov.ph', 0, '', '')
                 )
             print(f"GSheets pull: users restored.")
         except gspread.exceptions.WorksheetNotFound:
@@ -2141,6 +2157,68 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
         return 0, [str(e)]
     finally:
         _release_sync_lock(lock_fd)
+
+
+def pull_reference_from_gsheets():
+    """Lightweight sync: pull code_lookup and master_data from GSheets using
+    upsert (not wipe+reinsert). Used by the scanner tab on load so that
+    reference edits made directly in GSheets are available before scanning.
+    Returns (success_bool, error_message_or_None)."""
+    enabled = get_setting('gsheets_enabled') == 'True'
+    if not enabled:
+        return False, "GSheets sync disabled."
+    sheet_id = get_setting('gsheets_id')
+    creds = get_decrypted_setting('gsheets_credentials')
+    if not sheet_id or not creds:
+        return False, "Missing GSheets credentials."
+
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+        import json
+
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds_dict = json.loads(creds)
+        credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(credentials)
+        sh = client.open_by_key(sheet_id)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # ── 1. Pull Code Lookup (upsert) ──
+        try:
+            ws = sh.worksheet("Code Lookup")
+            records = ws.get_all_records()
+            for row in records:
+                code = str(row.get('Code', '')).strip().upper()
+                if not code:
+                    continue
+                dept = str(row.get('Department', '')).strip()
+                school = str(row.get('School/Office', '')).strip()
+                employees = str(row.get('Employees', '')).strip()
+                doc_type = str(row.get('Doc Type', '')).strip()
+                gen = str(row.get('Generated', '')).strip()
+                cursor.execute(
+                    "INSERT OR REPLACE INTO code_lookup "
+                    "(code, department, school_office, employees, doc_type, generated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (code, dept, school, employees, doc_type, gen)
+                )
+        except gspread.exceptions.WorksheetNotFound:
+            pass
+
+        # ── 2. Pull Master Data ──
+        try:
+            _pull_master_data_from_gsheets(sh, cursor)
+        except Exception:
+            pass
+
+        conn.commit()
+        conn.close()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
 
 def push_code_to_gsheets(sheet_id, service_account_json, code_dict):
     """Upsert a code_lookup entry into the 'Code Lookup' GSheets worksheet."""
@@ -2360,9 +2438,9 @@ def push_user_to_gsheets(sheet_id, service_account_json, user_dict):
         ws = sh.worksheet("Users")
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="Users", rows=1000, cols=10)
-        headers = ["Username", "Password Hash", "Role", "Status", "School/Office", "Email", "Requires Password Change", "Supervised Schools"]
+        headers = ["Username", "Password Hash", "Role", "Status", "School/Office", "Email", "Requires Password Change", "Supervised Schools", "Employee Name"]
         ws.insert_row(headers, 1)
-        ws.format("A1:H1", {"backgroundColor": {"red": 0.05, "green": 0.25, "blue": 0.45}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}})
+        ws.format("A1:I1", {"backgroundColor": {"red": 0.05, "green": 0.25, "blue": 0.45}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}})
         
     username = str(user_dict.get('username', '')).strip().lower()
     all_rows = ws.get_all_values()
@@ -2372,6 +2450,13 @@ def push_user_to_gsheets(sheet_id, service_account_json, user_dict):
     if existing_headers and "Requires Password Change" not in existing_headers:
         col_idx = len(existing_headers) + 1
         ws.update_cell(1, col_idx, "Requires Password Change")
+        existing_headers.append("Requires Password Change")
+
+    # Ensure the header row has the Employee Name column
+    if existing_headers and "Employee Name" not in existing_headers:
+        col_idx = len(existing_headers) + 1
+        ws.update_cell(1, col_idx, "Employee Name")
+        existing_headers.append("Employee Name")
     
     match_row_num = None
     for idx, row in enumerate(all_rows[1:], start=2):
@@ -2388,10 +2473,11 @@ def push_user_to_gsheets(sheet_id, service_account_json, user_dict):
         user_dict.get('email', ''),
         user_dict.get('requires_password_change', 0),
         user_dict.get('supervised_schools', ''),
+        user_dict.get('employee_name', ''),
     ]
     
     if match_row_num:
-        ws.update(range_name=f"A{match_row_num}:G{match_row_num}", values=[row_data])
+        ws.update(range_name=f"A{match_row_num}:I{match_row_num}", values=[row_data])
     else:
         ws.append_row(row_data)
 

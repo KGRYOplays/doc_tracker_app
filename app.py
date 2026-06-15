@@ -117,6 +117,17 @@ def _get_gsheets_config():
     return enabled and bool(sheet_id) and bool(creds), sheet_id, creds
 
 
+def _check_maintenance():
+    """Check if maintenance mode is active and the current user is not admin.
+    Returns a (blocked, message_or_None) tuple.
+    If blocked, the caller should return the message as a 403 response."""
+    if db_manager.get_setting('maintenance_mode') == 'True':
+        role = session.get('user_role', '')
+        if role != 'admin':
+            return True, 'System is in maintenance mode. Only admins can perform this action.'
+    return False, None
+
+
 # Master data is now stored in the SQLite `master_data` table.
 # See db_manager.py for helper functions: get_all_departments(),
 # get_schools_for_department(), get_employees_for_school(), etc.
@@ -155,17 +166,7 @@ def save_code_lookup(code, department, school, employees, doc_type):
     gen_time = datetime.now().strftime("%m/%d/%Y")
     employees = [db_manager.reorder_name(e) for e in employees]
     
-    code_dict = {
-        'code': code, 'department': department, 'school_office': school,
-        'employees': '|||'.join(employees), 'doc_type': doc_type, 'generated_at': gen_time
-    }
-    
-    ok, sheet_id, creds = _get_gsheets_config()
-    if ok:
-        db_manager._gsheets_push_with_retry(
-            db_manager.push_code_to_gsheets, sheet_id, creds, code_dict
-        )
-    
+    # ── 1. SQLite-first: write to local DB first (fast, always succeeds) ──
     import time as _time
     import sqlite3 as _sqlite3
     for _attempt in range(3):
@@ -192,36 +193,24 @@ def save_code_lookup(code, department, school, employees, doc_type):
                 continue
             raise
     db_manager.trigger_excel_export()
+    
+    # ── 2. Then push to GSheets (non-blocking, user sees response immediately) ──
+    code_dict = {
+        'code': code, 'department': department, 'school_office': school,
+        'employees': '|||'.join(employees), 'doc_type': doc_type, 'generated_at': gen_time
+    }
+    ok, sheet_id, creds = _get_gsheets_config()
+    if ok:
+        db_manager._gsheets_push_with_retry(
+            db_manager.push_code_to_gsheets, sheet_id, creds, code_dict
+        )
 
 
 def save_code_lookup_batch(code_dicts):
-    """Batch save multiple codes — one GSheets call for all, then batch SQLite insert.
-    
-    Merges new codes with existing codes in DB before the GSheets push, so existing codes
-    are preserved (push_all_codes_to_gsheets does a full clear + rewrite).
-    """
+    """Batch save multiple codes — insert into SQLite first, then push to GSheets."""
     gen_time = datetime.now().strftime("%m/%d/%Y")
     
-    ok, sheet_id, creds = _get_gsheets_config()
-    if ok:
-        import sqlite3 as _sqlite3
-        import time as _time
-        for _attempt in range(3):
-            try:
-                conn = db_manager.get_db_connection()
-                existing = conn.execute("SELECT * FROM code_lookup").fetchall()
-                conn.close()
-                break
-            except _sqlite3.OperationalError as _e:
-                if 'locked' in str(_e) and _attempt < 2:
-                    _time.sleep(1 * (_attempt + 1))
-                    continue
-                raise
-        all_rows = list(existing) + code_dicts
-        db_manager._gsheets_push_with_retry(
-            db_manager.push_all_codes_to_gsheets, sheet_id, creds, all_rows
-        )
-    
+    # ── 1. SQLite-first: insert all new codes into local DB ──
     import time as _time
     import sqlite3 as _sqlite3
     for _attempt in range(3):
@@ -253,6 +242,24 @@ def save_code_lookup_batch(code_dicts):
                 continue
             raise
     db_manager.trigger_excel_export()
+    
+    # ── 2. Then push ALL codes (existing + new) to GSheets ──
+    ok, sheet_id, creds = _get_gsheets_config()
+    if ok:
+        for _attempt in range(3):
+            try:
+                conn = db_manager.get_db_connection()
+                all_db_rows = conn.execute("SELECT * FROM code_lookup").fetchall()
+                conn.close()
+                break
+            except _sqlite3.OperationalError as _e:
+                if 'locked' in str(_e) and _attempt < 2:
+                    _time.sleep(1 * (_attempt + 1))
+                    continue
+                raise
+        db_manager._gsheets_push_with_retry(
+            db_manager.push_all_codes_to_gsheets, sheet_id, creds, all_db_rows
+        )
 
 
 def get_code_lookup(code):
@@ -1473,6 +1480,9 @@ def admin_all_codes():
 @app.route('/generate_code', methods=['POST'])
 @require_login
 def generate_code():
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
     try:
         data       = request.json
         code       = generate_6_digit_code()
@@ -1548,6 +1558,9 @@ def generate_code():
 @app.route('/api/generate_batch', methods=['POST'])
 @require_login
 def generate_batch():
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
     try:
         data = request.json
         generations = data.get('generations', [])
@@ -1738,6 +1751,9 @@ def barcode_overlay():
 @app.route('/log_scan', methods=['POST'])
 @require_login
 def log_scan():
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
     with scan_lock:
         try:
             data             = request.json
@@ -2254,6 +2270,9 @@ def get_records_by_code(code):
 @app.route('/api/update_record/<int:record_id>', methods=['PUT'])
 @require_admin
 def update_record(record_id):
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
     try:
         data = request.json
         conn = db_manager.get_db_connection()
@@ -2297,6 +2316,9 @@ def update_record(record_id):
 @app.route('/api/delete_record/<int:record_id>', methods=['DELETE'])
 @require_admin
 def delete_record(record_id):
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
     try:
         conn = db_manager.get_db_connection()
         conn.execute("DELETE FROM routing_records WHERE id = ?", (record_id,))
@@ -2628,6 +2650,55 @@ def pull_from_gsheets():
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/api/sync/reference', methods=['GET'])
+@require_login
+def sync_reference():
+    """Pull reference data (code_lookup, master_data) from GSheets.
+    Used by the scanner tab on load so GSheets edits are available before scanning.
+    Lightweight upsert — does not wipe SQLite."""
+    if not session.get('user_role'):
+        return jsonify({'status': 'error', 'message': 'Not authenticated'}), 401
+    success, error = db_manager.pull_reference_from_gsheets()
+    if success:
+        return jsonify({'status': 'success', 'message': 'Reference data synced from Google Sheets.'})
+    return jsonify({'status': 'warning', 'message': f'Reference sync skipped or failed: {error}'}), 200
+
+
+@app.route('/api/admin/maintenance/toggle', methods=['POST'])
+@require_admin
+def maintenance_toggle():
+    """Toggle maintenance mode on/off. When ON, only admins can scan/generate,
+    and the periodic pull + background sync worker are paused so the admin
+    can safely edit data in Google Sheets without surprise syncs."""
+    try:
+        current = db_manager.get_setting('maintenance_mode', 'False')
+        new_val = 'False' if current == 'True' else 'True'
+        db_manager.save_setting('maintenance_mode', new_val)
+        
+        if new_val == 'True':
+            db_manager.update_last_pull_info("paused", "Maintenance mode activated — periodic pull paused.")
+        
+        return jsonify({
+            'status': 'success',
+            'maintenance_mode': new_val == 'True',
+            'message': 'Maintenance mode ' + ('enabled.' if new_val == 'True' else 'disabled.')
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/admin/maintenance/status', methods=['GET'])
+@require_login
+def maintenance_status():
+    """Return current maintenance mode status."""
+    enabled = db_manager.get_setting('maintenance_mode', 'False') == 'True'
+    role = session.get('user_role', '')
+    return jsonify({
+        'maintenance_mode': enabled,
+        'is_admin': role == 'admin'
+    })
 
 
 @app.route('/api/admin/reconcile_employee_names', methods=['POST'])

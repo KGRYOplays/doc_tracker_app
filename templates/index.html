@@ -1612,6 +1612,43 @@
         input:focus + .slider { box-shadow: 0 0 8px rgba(20, 184, 166, 0.4); }
         input:checked + .slider:before { transform: translateX(24px); }
 
+        /* ═══ MAINTENANCE MODE LOCK OVERLAY ═══ */
+        .maintenance-lock-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.55);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            border-radius: var(--radius-md);
+        }
+        .maintenance-lock-overlay .maintenance-lock-content {
+            text-align: center;
+            padding: 40px;
+            background: var(--surface);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            max-width: 400px;
+        }
+        .maintenance-lock-overlay .lock-icon {
+            font-size: 3rem;
+            margin-bottom: 12px;
+        }
+        .maintenance-lock-overlay h2 {
+            margin: 0 0 8px 0;
+            color: var(--text-main);
+        }
+        .maintenance-lock-overlay p {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+        .tab-panel { position: relative; }
+
         /* ═══ SCHOOL STATUS ═══ */
         .school-status { font-size: 0.82rem; margin-top: 4px; margin-bottom: 8px; min-height: 1.2em; }
         .school-status.valid { color: var(--success); }
@@ -2043,6 +2080,13 @@
 
         <!-- ════ TAB 2: CODE GENERATOR ════ -->
         <div id="tab-generator" class="tab-panel">
+            <div id="generatorLockOverlay" class="maintenance-lock-overlay" style="display:none;">
+                <div class="maintenance-lock-content">
+                    <div class="lock-icon">🔒</div>
+                    <h2>System is in Maintenance Mode</h2>
+                    <p>Only admins can generate codes during maintenance.</p>
+                </div>
+            </div>
             <div class="grid-2">
                 <div class="glass-card">
                     <div class="card-title-row">
@@ -2332,6 +2376,29 @@
                     </div>
                 </div>
             </div>
+            <div class="glass-card admin-card" id="maintenanceModeCard">
+                <div class="card-title-row">
+                    <div class="card-icon">🛠️</div>
+                    <h2>Maintenance Mode</h2>
+                </div>
+                <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:12px;">
+                    When enabled, only admins can scan and generate codes.
+                    Periodic sync is paused so you can safely edit data in Google Sheets.
+                </p>
+                <div class="toggle-container">
+                    <span class="toggle-label" id="maintenanceLabel">🔴 Maintenance Mode is OFF</span>
+                    <label class="switch">
+                        <input type="checkbox" id="maintenanceToggle" onchange="toggleMaintenanceMode()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div id="maintenanceInfo" style="display:none; margin-top:12px; padding:12px; background:rgba(255,193,7,0.1); border:1px solid rgba(255,193,7,0.3); border-radius:var(--radius-md);">
+                    <p style="margin:0; font-size:0.85rem; color:var(--warning);">
+                        ⚠️ You can safely edit Google Sheets. Non-admin users cannot scan or generate codes.
+                        Periodic sync is paused. Turn off maintenance mode when done.
+                    </p>
+                </div>
+            </div>
             <div class="glass-card">
                 <div class="card-title-row">
                     <div class="card-icon">🎨</div>
@@ -2459,6 +2526,13 @@
 
     <!-- ════ TAB 5: SCANNER ════ -->
     <div id="tab-scanner" class="tab-panel">
+        <div id="scannerLockOverlay" class="maintenance-lock-overlay" style="display:none;">
+            <div class="maintenance-lock-content">
+                <div class="lock-icon">🔒</div>
+                <h2>System is in Maintenance Mode</h2>
+                <p>Only admins can scan during maintenance.</p>
+            </div>
+        </div>
         <div class="container">
             <div class="picker-container" id="officePickerCard">
                 <label for="receivingOffice"> Current Receiving Office</label>
@@ -2537,6 +2611,19 @@
             <button onclick="document.getElementById('cloudPushDialog').style.display='none'" style="background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:0.85rem;">Cancel</button>
         </div>
     </div>
+
+    <!-- Sync-in-progress modal -->
+    <div id="syncModal" class="maintenance-lock-overlay" style="display:none;">
+        <div class="maintenance-lock-content">
+            <div class="lock-icon" style="font-size:2.5rem;">🔄</div>
+            <h2>Waiting for Data to Sync...</h2>
+            <p style="margin-bottom:16px;">Saving your codes to Google Sheets. This should complete within a few seconds.</p>
+            <div style="width:40px;height:40px;margin:0 auto;border:4px solid var(--glass-border);border-top:4px solid var(--primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+        </div>
+    </div>
+    <style>
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
 
     <script>
         var addedEmployees = [];
@@ -3641,6 +3728,14 @@
             var btn = document.getElementById('generateAllBtn');
             setButtonLoading(btn, true);
 
+            // Show syncing modal
+            var syncModal = document.getElementById('syncModal');
+            if (syncModal) syncModal.style.display = 'flex';
+
+            var timer = setTimeout(function() {
+                // If it's taking too long, show a persistent message
+            }, 2000);
+
             fetch('/api/generate_batch', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -3648,6 +3743,8 @@
             })
             .then(res => res.json())
             .then(function(data) {
+                clearTimeout(timer);
+                if (syncModal) syncModal.style.display = 'none';
                 setButtonLoading(btn, false);
                 if (data.status === 'success') {
                     var results = data.results || [];
@@ -3670,6 +3767,8 @@
                 }
             })
             .catch(function() {
+                clearTimeout(timer);
+                if (syncModal) syncModal.style.display = 'none';
                 setButtonLoading(btn, false);
                 showToast('error', 'Network error during batch generation.');
             });
@@ -5459,6 +5558,113 @@
         window.addEventListener('beforeunload', function() {
             navigator.sendBeacon('/api/flush_sync');
         });
+
+        // ══════════════════════════════════════════════════════════════
+        //  MAINTENANCE MODE
+        // ══════════════════════════════════════════════════════════════
+
+        var maintenancePollInterval = null;
+
+        function toggleMaintenanceMode() {
+            var toggle = document.getElementById('maintenanceToggle');
+            var wasLoading = toggle.disabled;
+            if (wasLoading) return;
+            toggle.disabled = true;
+
+            fetch('/api/admin/maintenance/toggle', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                toggle.disabled = false;
+                if (data.status === 'success') {
+                    checkMaintenanceStatus();
+                    showToast('success', data.message);
+                } else {
+                    toggle.checked = !toggle.checked;
+                    showToast('error', data.message || 'Failed to toggle maintenance mode.');
+                }
+            })
+            .catch(function() {
+                toggle.disabled = false;
+                toggle.checked = !toggle.checked;
+                showToast('error', 'Network error toggling maintenance mode.');
+            });
+        }
+
+        function checkMaintenanceStatus() {
+            fetch('/api/admin/maintenance/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                updateMaintenanceUI(data);
+            })
+            .catch(function() {});
+        }
+
+        function updateMaintenanceUI(data) {
+            var enabled = data.maintenance_mode;
+            var isAdmin = data.is_admin;
+            var toggle = document.getElementById('maintenanceToggle');
+            var label = document.getElementById('maintenanceLabel');
+            var info = document.getElementById('maintenanceInfo');
+
+            if (toggle) {
+                toggle.checked = enabled;
+            }
+            if (label) {
+                label.textContent = enabled ? '🔴 Maintenance Mode is ON' : '🟢 Maintenance Mode is OFF';
+            }
+            if (info) {
+                info.style.display = enabled ? 'block' : 'none';
+            }
+
+            // Lock overlays for non-admin users
+            var scannerLock = document.getElementById('scannerLockOverlay');
+            var generatorLock = document.getElementById('generatorLockOverlay');
+            if (enabled && !isAdmin) {
+                if (scannerLock) scannerLock.style.display = 'flex';
+                if (generatorLock) generatorLock.style.display = 'flex';
+            } else {
+                if (scannerLock) scannerLock.style.display = 'none';
+                if (generatorLock) generatorLock.style.display = 'none';
+            }
+        }
+
+        // ── Start polling maintenance status on page load ──
+        function startMaintenancePolling() {
+            checkMaintenanceStatus();
+            if (maintenancePollInterval) clearInterval(maintenancePollInterval);
+            maintenancePollInterval = setInterval(checkMaintenanceStatus, 30000);
+        }
+
+        // ── Sync reference data from GSheets (used by scanner tab on load) ──
+        function syncReferenceData() {
+            fetch('/api/sync/reference')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.status === 'success') {
+                    console.log('Reference data synced from GSheets.');
+                }
+            })
+            .catch(function() {});
+        }
+
+        // ── Start polling on page load ──
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', startMaintenancePolling);
+        } else {
+            startMaintenancePolling();
+        }
+
+        // ── Modify switchTab to sync reference data when scanner loads ──
+        var _origSwitchTab = switchTab;
+        switchTab = function(tabId) {
+            _origSwitchTab(tabId);
+            if (tabId === 'tab-scanner') {
+                syncReferenceData();
+            }
+        };
     </script>
 </body>
 </html>
