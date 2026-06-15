@@ -158,6 +158,8 @@ def init_db():
     
     cursor.execute(f"CREATE TABLE IF NOT EXISTS routing_records ({', '.join(columns)})")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_code_employee ON routing_records(code, employee)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_routing_school ON routing_records(school_office)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_routing_code ON routing_records(code)")
     
     # 3. Settings Table
     cursor.execute('''
@@ -198,6 +200,10 @@ def init_db():
         cursor.execute("ALTER TABLE users ADD COLUMN supervised_schools TEXT DEFAULT ''")
     except:
         pass
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN employee_name TEXT DEFAULT ''")
+    except:
+        pass
     
     # 5. Master Data Table (replaces master_db.xlsx dependency)
     cursor.execute('''
@@ -212,16 +218,71 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_master_school ON master_data(school_office)")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_master_unique ON master_data(department, school_office, employee_name)")
     
+    # 6. Schools Table (RDBMS migration)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS schools (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            department TEXT NOT NULL DEFAULT ''
+        )
+    ''')
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_schools_name ON schools(name)")
+    
+    # 7. Employees Table (RDBMS migration)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS employees (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            school_id INTEGER NOT NULL,
+            FOREIGN KEY (school_id) REFERENCES schools(id)
+        )
+    ''')
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_name_school ON employees(name, school_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_employees_school ON employees(school_id)")
+    
+    # 8. Code Employees Table (RDBMS migration — employee links for each code)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS code_employees (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            employee_id INTEGER NOT NULL,
+            FOREIGN KEY (code) REFERENCES code_lookup(code),
+            FOREIGN KEY (employee_id) REFERENCES employees(id)
+        )
+    ''')
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_code_emp ON code_employees(code, employee_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_code_emp_code ON code_employees(code)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_code_emp_employee ON code_employees(employee_id)")
+    
+    # 9. Add employee_id column to routing_records (dual-write migration)
+    try:
+        cursor.execute("ALTER TABLE routing_records ADD COLUMN employee_id INTEGER REFERENCES employees(id)")
+    except Exception:
+        pass
+    
+    # 10. Pending profile changes (admin approval table)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS pending_profile_changes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            changes_json TEXT NOT NULL,
+            requested_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending'
+        )
+    ''')
+    
     conn.commit()
     
     # Seed default admin user if users table is empty
-    import hashlib
+    import hashlib, secrets
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
-        admin_hash = hashlib.sha256("admin123".encode()).hexdigest()
+        admin_password = secrets.token_urlsafe(12)
+        admin_hash = hashlib.sha256(admin_password.encode()).hexdigest()
         cursor.execute("INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       ('admin', admin_hash, 'Admin', 'Approved', '', 'admin@deped.gov.ph', 0))
+                       ('admin', admin_hash, 'Admin', 'Approved', '', 'admin@deped.gov.ph', 1))
         conn.commit()
+        print(f"!!! DEFAULT ADMIN PASSWORD: {admin_password} - CHANGE IMMEDIATELY !!!")
     
     # Seed default sync token if not present
     cursor.execute("SELECT value FROM settings WHERE key = 'sync_token'")
@@ -953,7 +1014,7 @@ def push_row_to_gsheets(sheet_id, service_account_json, row_dict):
     ws = sh.worksheet("Routing Records")
     
     # Always use fixed 10 stages for consistent column alignment
-    target_headers = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks", "Status"]
+    target_headers = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks", "Status", "Employee ID"]
     for i in range(1, 11):
         target_headers += [f"Receiving Office {i}", f"Receiver Name {i}", f"Timestamp {i}"]
     
@@ -977,6 +1038,7 @@ def push_row_to_gsheets(sheet_id, service_account_json, row_dict):
         doc_type,
         row_dict.get('remarks', ''),
         row_dict.get('status', 'for signature'),
+        row_dict.get('employee_id', '') or '',
     ]
     for i in range(1, 11):
         row_data.append(row_dict.get(f'receiving_office_{i}') or "")
@@ -1042,7 +1104,7 @@ def batch_push_routing_rows(sheet_id, service_account_json, rows):
     sh = client.open_by_key(sheet_id)
     ws = sh.worksheet("Routing Records")
 
-    target_headers = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks", "Status"]
+    target_headers = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks", "Status", "Employee ID"]
     for i in range(1, 11):
         target_headers += [f"Receiving Office {i}", f"Receiver Name {i}", f"Timestamp {i}"]
     end_col = _col_to_letter(len(target_headers))
@@ -1095,6 +1157,7 @@ def batch_push_routing_rows(sheet_id, service_account_json, rows):
             doc_type,
             r.get('remarks', ''),
             r.get('status', 'for signature'),
+            r.get('employee_id', '') or '',
         ]
         for i in range(1, 11):
             row_data.append(r.get(f'receiving_office_{i}') or "")
@@ -1128,7 +1191,7 @@ def push_all_routing_to_gsheets(sheet_id, service_account_json, rows):
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="Routing Records", rows=max(1000, len(rows) + 100), cols=50)
     
-    headers = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks", "Status"]
+    headers = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks", "Status", "Employee ID"]
     for i in range(1, 11):
         headers += [f"Receiving Office {i}", f"Receiver Name {i}", f"Timestamp {i}"]
     
@@ -1159,6 +1222,7 @@ def push_all_routing_to_gsheets(sheet_id, service_account_json, rows):
             doc_type,
             row_dict.get('remarks', ''),
             row_dict.get('status', 'for signature'),
+            row_dict.get('employee_id', '') or '',
         ]
         for i in range(1, 11):
             row_data.append(row_dict.get(f'receiving_office_{i}') or "")
@@ -1389,10 +1453,124 @@ def bulk_sync_to_gsheets():
         except Exception as e:
             errors.append(f"MasterData: {str(e)[:100]}")
 
+        # 5. Push new RDBMS sheets (Schools, Employees — full snapshot)
+        try:
+            _gsheets_push_with_retry(push_schools_to_gsheets, sheet_id, creds)
+        except Exception as e:
+            errors.append(f"Schools: {str(e)[:100]}")
+        try:
+            _gsheets_push_with_retry(push_employees_to_gsheets, sheet_id, creds)
+        except Exception as e:
+            errors.append(f"Employees: {str(e)[:100]}")
+
+        # 6. Push Code Employees (append-only)
+        try:
+            _gsheets_push_with_retry(push_code_employees_to_gsheets, sheet_id, creds)
+        except Exception as e:
+            errors.append(f"CodeEmployees: {str(e)[:100]}")
+
         conn.close()
         return count, errors
     except Exception as e:
         return 0, [str(e)]
+
+def sync_master_to_employees():
+    """Backfill schools, employees, code_employees from master_data + code_lookup.
+    
+    1. Upsert schools from master_data (distinct school_office + department)
+    2. Upsert employees from master_data (employee_name + school_id)
+    3. Create code_employees links from code_lookup.employees ||| split
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    school_count = 0
+    emp_count = 0
+    ce_count = 0
+    rr_count = 0
+    
+    # 1. Upsert schools
+    schools = cursor.execute(
+        "SELECT DISTINCT school_office, department FROM master_data"
+    ).fetchall()
+    for row in schools:
+        cursor.execute(
+            "INSERT OR IGNORE INTO schools (name, department) VALUES (?, ?)",
+            (row['school_office'], row['department'])
+        )
+        if cursor.rowcount > 0:
+            school_count += 1
+    
+    # 2. Upsert employees
+    employees = cursor.execute(
+        "SELECT md.employee_name, md.school_office FROM master_data md"
+    ).fetchall()
+    for row in employees:
+        s = cursor.execute(
+            "SELECT id FROM schools WHERE name = ?", (row['school_office'],)
+        ).fetchone()
+        if s:
+            cursor.execute(
+                "INSERT OR IGNORE INTO employees (name, school_id) VALUES (?, ?)",
+                (row['employee_name'], s['id'])
+            )
+            if cursor.rowcount > 0:
+                emp_count += 1
+    
+    # 3. Create code_employees links from code_lookup ||| split
+    codes = cursor.execute("SELECT code, employees, school_office FROM code_lookup").fetchall()
+    for code_row in codes:
+        code = code_row['code']
+        emp_names = code_row['employees'].split('|||') if code_row['employees'] else []
+        school = code_row['school_office']
+        s = cursor.execute("SELECT id FROM schools WHERE name = ?", (school,)).fetchone()
+        if not s:
+            continue
+        for emp_name in emp_names:
+            emp_name = emp_name.strip()
+            if not emp_name:
+                continue
+            e = cursor.execute(
+                "SELECT id FROM employees WHERE name = ? AND school_id = ?",
+                (emp_name, s['id'])
+            ).fetchone()
+            if not e:
+                # Employee not in master_data — create on the fly
+                cursor.execute(
+                    "INSERT OR IGNORE INTO employees (name, school_id) VALUES (?, ?)",
+                    (emp_name, s['id'])
+                )
+                if cursor.rowcount > 0:
+                    emp_count += 1
+                e = cursor.execute(
+                    "SELECT id FROM employees WHERE name = ? AND school_id = ?",
+                    (emp_name, s['id'])
+                ).fetchone()
+            if e:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO code_employees (code, employee_id) VALUES (?, ?)",
+                    (code, e['id'])
+                )
+                if cursor.rowcount > 0:
+                    ce_count += 1
+    
+    # 4. Link routing_records.employee_id
+    rrs = cursor.execute("SELECT id, employee, school_office FROM routing_records WHERE employee_id IS NULL").fetchall()
+    for rr in rrs:
+        e = cursor.execute("""
+            SELECT e.id FROM employees e
+            JOIN schools s ON s.id = e.school_id
+            WHERE e.name = ? AND s.name = ?
+        """, (rr['employee'], rr['school_office'])).fetchone()
+        if e:
+            cursor.execute("UPDATE routing_records SET employee_id = ? WHERE id = ?", (e['id'], rr['id']))
+            rr_count += 1
+    
+    conn.commit()
+    conn.close()
+    print(f"sync_master_to_employees: {school_count} schools, {emp_count} employees, {ce_count} code_employees, {rr_count} routing_records linked.")
+    return school_count, emp_count, ce_count, rr_count
+
 
 def force_import_from_excel():
     """Force reload data from Excel without exporting back - preserves manual Excel edits."""
@@ -1546,14 +1724,19 @@ def _pull_master_data_from_gsheets(sh, cursor):
             ws2 = sh.worksheet("Master Data Sheet2")
             records = ws2.get_all_records()
             for row in records:
-                # Construct employee name
-                name_parts = [
-                    row.get('FIRSTNAME'),
-                    row.get('MIDDLE INITIAL'),
-                    row.get('LASTNAME'),
-                    row.get('SUFFIX')
-                ]
-                emp = " ".join([str(n).strip() for n in name_parts if n and str(n).strip() and str(n).strip().lower() != 'nan'])
+                # Prefer pre-built EMPLOYEE_NAME column (ArrayFormula on Sheet2)
+                emp_raw = row.get('EMPLOYEE_NAME', '')
+                if emp_raw and str(emp_raw).strip() and str(emp_raw).strip().lower() != 'nan':
+                    emp = str(emp_raw).strip()
+                else:
+                    # Fallback: construct from individual name columns
+                    name_parts = [
+                        row.get('FIRSTNAME'),
+                        row.get('MIDDLE INITIAL'),
+                        row.get('LASTNAME'),
+                        row.get('SUFFIX')
+                    ]
+                    emp = " ".join([str(n).strip() for n in name_parts if n and str(n).strip() and str(n).strip().lower() != 'nan'])
                 school = str(row.get('SCHOOL/ OFFICE', '')).strip()
                 
                 if not emp or not school:
@@ -1788,7 +1971,8 @@ def _release_sync_lock(fd):
 
 def pull_all_from_gsheets(sheet_id=None, creds=None):
     """Restore all tables from Google Sheets into SQLite.
-    This is called on every startup so SQLite always reflects GSheets truth.
+    On startup, if SQLite already has data (non-Render restart), push local data
+    to GSheets first so any unsynced rows from the async queue are not lost.
     Uses a cross-process file lock so only one gunicorn worker pulls at a time.
     Returns (routing_record_count, error_list)."""
     if not sheet_id or not creds:
@@ -1818,6 +2002,24 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        # ── 0. Startup recovery: if SQLite has data, push to GSheets first ──
+        local_count = cursor.execute("SELECT COUNT(*) FROM routing_records").fetchone()[0]
+        if local_count > 0:
+            print(f"[GSheets pull] SQLite has {local_count} routing records — pushing local data to GSheets before refresh.")
+            try:
+                local_rows = cursor.execute("SELECT * FROM routing_records").fetchall()
+                if local_rows:
+                    _gsheets_push_with_retry(push_all_routing_to_gsheets, sheet_id, creds, local_rows)
+                local_codes = cursor.execute("SELECT * FROM code_lookup").fetchall()
+                if local_codes:
+                    _gsheets_push_with_retry(push_all_codes_to_gsheets, sheet_id, creds, local_codes)
+                local_users = cursor.execute("SELECT * FROM users").fetchall()
+                if local_users:
+                    _gsheets_push_with_retry(push_all_users_to_gsheets, sheet_id, creds, local_users)
+                print("[GSheets pull] Local data pushed to GSheets successfully.")
+            except Exception as pe:
+                print(f"[GSheets pull] Warning: could not push local data before pull: {pe}")
+        
         count = 0
         
         # ── 1. Pull Routing Records ──────────────────────────────────────────
@@ -1836,8 +2038,12 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
                 doc_type = str(row.get('Doc Type', '')).strip()
                 remarks = str(row.get('Remarks', '')).strip()
                 status = str(row.get('Status', '')).strip() or 'for signature'
+                emp_id = str(row.get('Employee ID', '')).strip()
                 vals = [dept, school, emp, code, doc_type, remarks, status]
                 col_names = ['department', 'school_office', 'employee', 'code', 'doc_type', 'remarks', 'status']
+                if emp_id and emp_id != 'nan':
+                    col_names.append('employee_id')
+                    vals.append(int(float(emp_id)) if emp_id.replace('.','',1).replace('-','',1).isdigit() else emp_id)
                 
                 for k, v in row.items():
                     if 'Receiving Office' in k:
@@ -1888,8 +2094,8 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
                 )
             # Ensure admin account always exists even if missing from GSheets
             if not cursor.execute("SELECT username FROM users WHERE username = 'admin'").fetchone():
-                import hashlib as _hashlib
-                fallback_hash = admin_row['password_hash'] if admin_row else _hashlib.sha256(b'admin123').hexdigest()
+                import hashlib as _hashlib, secrets as _secrets
+                fallback_hash = admin_row['password_hash'] if admin_row else _hashlib.sha256(_secrets.token_urlsafe(12).encode()).hexdigest()
                 cursor.execute(
                     "INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change, supervised_schools) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1972,6 +2178,110 @@ def push_code_to_gsheets(sheet_id, service_account_json, code_dict):
         ws.update(range_name=f"A{match_row_num}:F{match_row_num}", values=[row_data])
     else:
         ws.append_row(row_data)
+
+
+def push_schools_to_gsheets(sheet_id, service_account_json):
+    """Full-snapshot push: clear + rewrite 'Schools' worksheet."""
+    import gspread
+    client = _get_gspread_client(service_account_json)
+    sh = client.open_by_key(sheet_id)
+    try:
+        ws = sh.worksheet("Schools")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="Schools", rows=1000, cols=5)
+
+    conn = get_db_connection()
+    rows = conn.execute("SELECT id, name, department FROM schools ORDER BY id").fetchall()
+    conn.close()
+
+    headers = ["id", "name", "department"]
+    data = [headers]
+    for r in rows:
+        data.append([r['id'], r['name'], r['department']])
+
+    ws.clear()
+    if data:
+        end_col = _col_to_letter(len(headers))
+        ws.update(range_name=f"A1:{end_col}{len(data)}", values=data)
+        ws.format(f"A1:{end_col}1", {
+            "backgroundColor": {"red": 0.05, "green": 0.25, "blue": 0.45},
+            "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}
+        })
+        ws.freeze(rows=1)
+
+
+def push_employees_to_gsheets(sheet_id, service_account_json):
+    """Full-snapshot push: clear + rewrite 'Employees' worksheet."""
+    import gspread
+    client = _get_gspread_client(service_account_json)
+    sh = client.open_by_key(sheet_id)
+    try:
+        ws = sh.worksheet("Employees")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="Employees", rows=20000, cols=5)
+
+    conn = get_db_connection()
+    rows = conn.execute("SELECT e.id, e.name, e.school_id, s.name AS school_name FROM employees e JOIN schools s ON s.id = e.school_id ORDER BY e.id").fetchall()
+    conn.close()
+
+    headers = ["id", "name", "school_id", "school_name"]
+    data = [headers]
+    for r in rows:
+        data.append([r['id'], r['name'], r['school_id'], r['school_name']])
+
+    ws.clear()
+    if data:
+        end_col = _col_to_letter(len(headers))
+        ws.update(range_name=f"A1:{end_col}{len(data)}", values=data)
+        ws.format(f"A1:{end_col}1", {
+            "backgroundColor": {"red": 0.05, "green": 0.25, "blue": 0.45},
+            "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}
+        })
+        ws.freeze(rows=1)
+
+
+def push_code_employees_to_gsheets(sheet_id, service_account_json):
+    """Append-only push: only new/modified rows since last push.
+    Rows with active=FALSE are toggled in-place (set column C to FALSE)."""
+    import gspread
+    import datetime
+    client = _get_gspread_client(service_account_json)
+    sh = client.open_by_key(sheet_id)
+    try:
+        ws = sh.worksheet("Code Employees")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="Code Employees", rows=10000, cols=5)
+        headers = ["code", "employee_id", "active", "updated_at"]
+        ws.insert_row(headers, 1)
+        ws.format("A1:D1", {
+            "backgroundColor": {"red": 0.05, "green": 0.25, "blue": 0.45},
+            "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}
+        })
+
+    # Get all existing code-employee combos from sheet to avoid re-appending active rows
+    existing = set()
+    all_rows = ws.get_all_values()
+    for row in all_rows[1:]:
+        if len(row) >= 2:
+            existing.add((str(row[0]).strip(), str(row[1]).strip()))
+
+    now = datetime.datetime.utcnow().isoformat()
+    conn = get_db_connection()
+    rows = conn.execute("""
+        SELECT ce.code, ce.employee_id, 1 AS active, ? AS updated_at
+        FROM code_employees ce
+        ORDER BY ce.code, ce.employee_id
+    """, (now,)).fetchall()
+    conn.close()
+
+    append_data = []
+    for r in rows:
+        key = (str(r['code']).strip(), str(r['employee_id']).strip())
+        if key not in existing:
+            append_data.append([r['code'], r['employee_id'], 'TRUE', r['updated_at']])
+
+    if append_data:
+        ws.append_rows(append_data)
 
 
 def push_master_db_to_gsheets(sheet_id, service_account_json):
@@ -2071,7 +2381,7 @@ def push_user_to_gsheets(sheet_id, service_account_json, user_dict):
             
     row_data = [
         user_dict.get('username', ''),
-        user_dict.get('password_hash', ''),
+        '',  # password_hash intentionally blank — never pushed to sheets
         user_dict.get('role', ''),
         user_dict.get('status', ''),
         user_dict.get('school_office', ''),
@@ -2084,3 +2394,187 @@ def push_user_to_gsheets(sheet_id, service_account_json, user_dict):
         ws.update(range_name=f"A{match_row_num}:G{match_row_num}", values=[row_data])
     else:
         ws.append_row(row_data)
+
+
+# --- SCHOOL CODE MERGE HELPERS ---
+
+def find_duplicate_codes(doc_type):
+    """Find schools with multiple generated codes for a given doc_type.
+    Returns list of {school_office, codes: [{code, dept, employees, routing_count, generated_at}]}."""
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT code, department, school_office, employees, generated_at, doc_type FROM code_lookup WHERE doc_type = ? ORDER BY school_office, generated_at DESC",
+        (doc_type,)
+    ).fetchall()
+    conn.close()
+
+    school_groups = {}
+    for r in rows:
+        d = dict(r)
+        school = d['school_office']
+        if school not in school_groups:
+            school_groups[school] = []
+        school_groups[school].append(d)
+
+    result = []
+    conn2 = get_db_connection()
+    for school, codes in school_groups.items():
+        if len(codes) < 2:
+            continue
+        # Enrich with routing_count and determine survivor (code with most routing records)
+        enriched = []
+        for c in codes:
+            cnt = conn2.execute("SELECT COUNT(*) FROM routing_records WHERE code = ?", (c['code'],)).fetchone()[0]
+            enriched.append({**c, 'routing_count': cnt})
+        enriched.sort(key=lambda x: x['routing_count'], reverse=True)
+        result.append({
+            'school_office': school,
+            'department': enriched[0]['department'],
+            'codes': enriched,
+            'survivor_code': enriched[0]['code']
+        })
+    conn2.close()
+    return result
+
+
+def merge_codes(doc_type, merges):
+    """Execute merge for given merges list.
+    merges: [{school_office, survivor_code, delete_codes}]
+    Returns {merged_count, reassigned_records, deleted_codes}."""
+    conn = get_db_connection()
+    total_reassigned = 0
+    deleted_codes_list = []
+    merged_count = len(merges)
+
+    for m in merges:
+        survivor = m['survivor_code']
+        to_delete = m.get('delete_codes', [])
+
+        # Reassign routing records from deleted codes to survivor
+        for old_code in to_delete:
+            # Count records to be reassigned
+            cnt = conn.execute(
+                "SELECT COUNT(*) FROM routing_records WHERE code = ? AND code != ?",
+                (old_code, survivor)
+            ).fetchone()[0]
+            if cnt:
+                conn.execute(
+                    "UPDATE routing_records SET code = ? WHERE code = ? AND code != ?",
+                    (survivor, old_code, survivor)
+                )
+                total_reassigned += cnt
+            # Delete the old code from code_lookup
+            conn.execute("DELETE FROM code_lookup WHERE code = ?", (old_code,))
+            deleted_codes_list.append(old_code)
+
+    conn.commit()
+    conn.close()
+
+    # Queue sync for all affected routing records
+    queue_sync_batch(['all'])
+
+    return {
+        'merged_count': merged_count,
+        'reassigned_records': total_reassigned,
+        'deleted_codes': deleted_codes_list
+    }
+
+
+# ─────────────────────────────────────────────
+#  PENDING PROFILE CHANGES (admin approval)
+# ─────────────────────────────────────────────
+
+def create_pending_change(username, changes_dict):
+    """Insert a pending profile change request. Returns the new row id."""
+    conn = get_db_connection()
+    now = datetime.now().isoformat()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO pending_profile_changes (username, changes_json, requested_at, status) VALUES (?, ?, ?, 'pending')",
+        (username, json.dumps(changes_dict), now)
+    )
+    new_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return new_id
+
+
+def get_pending_changes():
+    """Return all pending_profile_changes rows ordered by newest first."""
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT * FROM pending_profile_changes ORDER BY requested_at DESC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_pending_change(change_id):
+    """Return a single pending change by id."""
+    conn = get_db_connection()
+    row = conn.execute(
+        "SELECT * FROM pending_profile_changes WHERE id = ?", (change_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def apply_pending_change(change_id):
+    """Apply the changes to the users table and mark as approved.
+    Returns {'status': 'ok', 'changes_applied': [...]} or {'status': 'error', 'message': ...}
+    """
+    conn = get_db_connection()
+    row = conn.execute(
+        "SELECT * FROM pending_profile_changes WHERE id = ? AND status = 'pending'",
+        (change_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        return {'status': 'error', 'message': 'Pending change not found or already processed.'}
+
+    changes = json.loads(row['changes_json'])
+    username = row['username']
+    applied = []
+
+    # Build update SET clause
+    update_fields = {}
+    for field in ['employee_name', 'email', 'supervised_schools', 'username']:
+        if field in changes:
+            new_val = changes[field]
+            # Skip if null/empty
+            if new_val is None or (isinstance(new_val, str) and not new_val.strip()):
+                continue
+            update_fields[field] = new_val.strip() if isinstance(new_val, str) else new_val
+            applied.append(field)
+
+    # Also handle password_hash change (applied immediately by request_profile_change endpoint)
+    # No need to apply here since it was already done.
+
+    if update_fields:
+        set_clause = ', '.join([f"{k} = ?" for k in update_fields.keys()])
+        values = list(update_fields.values())
+        # Update the users table
+        # If username is being changed, the current username is the old one
+        current_username = changes.get('_current_username', username)
+        conn.execute(f"UPDATE users SET {set_clause} WHERE username = ?", values + [current_username])
+        applied.append('users_table_updated')
+
+    conn.execute(
+        "UPDATE pending_profile_changes SET status = 'approved' WHERE id = ?",
+        (change_id,)
+    )
+    conn.commit()
+    conn.close()
+    return {'status': 'ok', 'changes_applied': applied}
+
+
+def reject_pending_change(change_id):
+    """Mark a pending change as rejected."""
+    conn = get_db_connection()
+    conn.execute(
+        "UPDATE pending_profile_changes SET status = 'rejected' WHERE id = ?",
+        (change_id,)
+    )
+    conn.commit()
+    conn.close()
+    return {'status': 'ok'}

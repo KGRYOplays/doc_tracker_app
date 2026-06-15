@@ -12,12 +12,25 @@ from PIL import Image, ImageDraw, ImageFont
 import hashlib
 import json as json_lib
 import threading
+import bcrypt
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 import db_manager
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'barcode-routing-secret-2024-change-in-prod')
+app.secret_key = os.environ.get('SECRET_KEY')
+if not app.secret_key:
+    app.secret_key = 'dev-fallback-key-do-not-use-in-production'
+    print("WARNING: SECRET_KEY env var not set. Using insecure fallback. Set SECRET_KEY in production.")
 CORS(app)
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["60 per minute"],
+    storage_uri="memory://"
+)
 
 MASTER_DB  = 'master_db.xlsx'
 QR_FOLDER  = os.path.join('static', 'qr_generated')
@@ -38,6 +51,23 @@ if not db_manager.get_setting('logo_url', ''):
 
 # Serialize concurrent scan writes so SELECT → INSERT/UPDATE is atomic
 scan_lock = threading.Lock()
+
+# ── Graceful shutdown: drain GSheets sync queue before exit ──
+import signal as _signal
+import atexit as _atexit
+
+def _drain_sync_queue():
+    if hasattr(db_manager, 'gs_sync_queue'):
+        print("Shutdown: draining GSheets sync queue...")
+        try:
+            db_manager.gs_sync_queue.join()
+            print("Shutdown: queue drained.")
+        except Exception as e:
+            print(f"Shutdown: error draining queue: {e}")
+
+_signal.signal(_signal.SIGTERM, lambda *_: (_drain_sync_queue(), exit(0)))
+_atexit.register(_drain_sync_queue)
+print("Graceful shutdown handler registered.")
 
 
 # ─────────────────────────────────────────────
@@ -92,25 +122,50 @@ def _get_gsheets_config():
 # get_schools_for_department(), get_employees_for_school(), etc.
 
 
+def _resolve_employee_ids(conn, employee_names, school):
+    """Look up (or create on the fly) employee IDs for a list of names + school.
+    Returns list of (name, employee_id) tuples."""
+    ids = []
+    s = conn.execute("SELECT id FROM schools WHERE name = ?", (school,)).fetchone()
+    if not s:
+        # School not in schools table yet — create it
+        conn.execute("INSERT OR IGNORE INTO schools (name) VALUES (?)", (school,))
+        s = conn.execute("SELECT id FROM schools WHERE name = ?", (school,)).fetchone()
+    school_id = s['id']
+    for name in employee_names:
+        e = conn.execute(
+            "SELECT id FROM employees WHERE name = ? AND school_id = ?",
+            (name, school_id)
+        ).fetchone()
+        if not e:
+            conn.execute(
+                "INSERT OR IGNORE INTO employees (name, school_id) VALUES (?, ?)",
+                (name, school_id)
+            )
+            e = conn.execute(
+                "SELECT id FROM employees WHERE name = ? AND school_id = ?",
+                (name, school_id)
+            ).fetchone()
+        if e:
+            ids.append((name, e['id']))
+    return ids
+
+
 def save_code_lookup(code, department, school, employees, doc_type):
     gen_time = datetime.now().strftime("%m/%d/%Y")
-    
-    # Sanitize employee names: if any are still in "LastName, FirstName" format, reorder them
     employees = [db_manager.reorder_name(e) for e in employees]
     
-    # Write to Google Sheets FIRST (synchronous, authoritative source)
+    code_dict = {
+        'code': code, 'department': department, 'school_office': school,
+        'employees': '|||'.join(employees), 'doc_type': doc_type, 'generated_at': gen_time
+    }
+    
     ok, sheet_id, creds = _get_gsheets_config()
     if ok:
-        code_dict = {
-            'code': code, 'department': department, 'school_office': school,
-            'employees': '|||'.join(employees), 'doc_type': doc_type, 'generated_at': gen_time
-        }
-        # Synchronous push — fails fast if GSheets is unreachable
         db_manager._gsheets_push_with_retry(
             db_manager.push_code_to_gsheets, sheet_id, creds, code_dict
         )
     
-    # Then update local SQLite cache for fast reads (with retry on lock)
     import time as _time
     import sqlite3 as _sqlite3
     for _attempt in range(3):
@@ -121,6 +176,13 @@ def save_code_lookup(code, department, school, employees, doc_type):
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (code, department, school, '|||'.join(employees), doc_type, gen_time)
             )
+            # Dual-write to code_employees
+            emp_ids = _resolve_employee_ids(conn, employees, school)
+            for _name, eid in emp_ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO code_employees (code, employee_id) VALUES (?, ?)",
+                    (code, eid)
+                )
             conn.commit()
             conn.close()
             break
@@ -129,28 +191,96 @@ def save_code_lookup(code, department, school, employees, doc_type):
                 _time.sleep(1 * (_attempt + 1))
                 continue
             raise
-        
+    db_manager.trigger_excel_export()
+
+
+def save_code_lookup_batch(code_dicts):
+    """Batch save multiple codes — one GSheets call for all, then batch SQLite insert.
+    
+    Merges new codes with existing codes in DB before the GSheets push, so existing codes
+    are preserved (push_all_codes_to_gsheets does a full clear + rewrite).
+    """
+    gen_time = datetime.now().strftime("%m/%d/%Y")
+    
+    ok, sheet_id, creds = _get_gsheets_config()
+    if ok:
+        import sqlite3 as _sqlite3
+        import time as _time
+        for _attempt in range(3):
+            try:
+                conn = db_manager.get_db_connection()
+                existing = conn.execute("SELECT * FROM code_lookup").fetchall()
+                conn.close()
+                break
+            except _sqlite3.OperationalError as _e:
+                if 'locked' in str(_e) and _attempt < 2:
+                    _time.sleep(1 * (_attempt + 1))
+                    continue
+                raise
+        all_rows = list(existing) + code_dicts
+        db_manager._gsheets_push_with_retry(
+            db_manager.push_all_codes_to_gsheets, sheet_id, creds, all_rows
+        )
+    
+    import time as _time
+    import sqlite3 as _sqlite3
+    for _attempt in range(3):
+        try:
+            conn = db_manager.get_db_connection()
+            conn.executemany(
+                "INSERT OR REPLACE INTO code_lookup (code, department, school_office, employees, doc_type, generated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [(
+                    cd['code'], cd['department'], cd['school_office'],
+                    cd['employees'], cd['doc_type'], gen_time
+                ) for cd in code_dicts]
+            )
+            # Dual-write to code_employees
+            for cd in code_dicts:
+                emp_names = [e.strip() for e in cd['employees'].split('|||') if e.strip()]
+                emp_ids = _resolve_employee_ids(conn, emp_names, cd['school_office'])
+                for _name, eid in emp_ids:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO code_employees (code, employee_id) VALUES (?, ?)",
+                        (cd['code'], eid)
+                    )
+            conn.commit()
+            conn.close()
+            break
+        except _sqlite3.OperationalError as _e:
+            if 'locked' in str(_e) and _attempt < 2:
+                _time.sleep(1 * (_attempt + 1))
+                continue
+            raise
     db_manager.trigger_excel_export()
 
 
 def get_code_lookup(code):
     conn = db_manager.get_db_connection()
     row = conn.execute("SELECT * FROM code_lookup WHERE code = ?", (code,)).fetchone()
-    conn.close()
     if not row:
+        conn.close()
         return None
     
-    # Handle both old (comma) and new (|||) delimiters for backward compatibility
-    employees_str = row['employees']
-    if '|||' in employees_str:
-        employees_list = employees_str.split('|||')
+    # Try RDBMS first: read from code_employees + employees
+    emp_rows = conn.execute("""
+        SELECT e.name FROM code_employees ce
+        JOIN employees e ON e.id = ce.employee_id
+        WHERE ce.code = ?
+    """, (code,)).fetchall()
+    
+    if emp_rows:
+        employees_list = [db_manager.reorder_name(r['name']) for r in emp_rows]
     else:
-        # Old format - split by comma (will be migrated)
-        employees_list = employees_str.split(',')
+        # Fallback to ||| splitting for backward compat (pre-RDBMS data)
+        employees_str = row['employees']
+        if '|||' in employees_str:
+            employees_list = employees_str.split('|||')
+        else:
+            employees_list = employees_str.split(',')
+        employees_list = [db_manager.reorder_name(e) for e in employees_list]
     
-    # Tolerant: reorder any names still in "LastName, FirstName" format to "FirstName LastName"
-    employees_list = [db_manager.reorder_name(e) for e in employees_list]
-    
+    conn.close()
     return {
         'department': row['department'],
         'school':     row['school_office'],
@@ -569,6 +699,7 @@ def scanner_page():
 # ─────────────────────────────────────────────
 
 @app.route('/api/login', methods=['POST'])
+@limiter.limit("5 per minute")
 def login():
     try:
         data = request.json
@@ -580,25 +711,40 @@ def login():
             
         conn = db_manager.get_db_connection()
         user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-        conn.close()
         
         if not user:
+            conn.close()
             return jsonify({'status': 'error', 'message': 'Invalid username or passkey.'}), 401
             
-        pw_hash = hashlib.sha256(password.encode()).hexdigest()
-        if user['password_hash'] != pw_hash:
+        pw_bytes = password.encode()
+        stored_hash = user['password_hash']
+        
+        if stored_hash.startswith('$2b$') or stored_hash.startswith('$2a$'):
+            if not bcrypt.checkpw(pw_bytes, stored_hash.encode()):
+                conn.close()
+                return jsonify({'status': 'error', 'message': 'Invalid username or passkey.'}), 401
+        elif stored_hash == hashlib.sha256(pw_bytes).hexdigest():
+            new_hash = bcrypt.hashpw(pw_bytes, bcrypt.gensalt()).decode()
+            conn.execute("UPDATE users SET password_hash = ? WHERE username = ?", (new_hash, username))
+            conn.commit()
+        else:
+            conn.close()
             return jsonify({'status': 'error', 'message': 'Invalid username or passkey.'}), 401
             
         if user['status'] != 'Approved':
+            conn.close()
             return jsonify({'status': 'error', 'message': 'Your account is pending admin approval.'}), 403
             
         supervised = (user['supervised_schools'] or '').strip()
+        emp_name = (user['employee_name'] or '').strip()
         session['username'] = user['username']
         session['user_role'] = user['role']
         session['school_office'] = user['school_office'] or ''
         session['supervised_schools'] = supervised
         session['email'] = user['email'] or ''
+        session['employee_name'] = emp_name
         session.permanent = True
+        conn.close()
         
         return jsonify({
             'status': 'success',
@@ -609,13 +755,15 @@ def login():
                 'email': user['email'] or '',
                 'role': user['role'],
                 'school_office': user['school_office'] or '',
-                'supervised_schools': supervised
+                'supervised_schools': supervised,
+                'employee_name': emp_name
             }
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/register', methods=['POST'])
+@limiter.limit("3 per minute")
 def register():
     try:
         data = request.json
@@ -623,6 +771,7 @@ def register():
         role_request = data.get('role', 'User').strip()
         school_office = data.get('school_office', '').strip()
         email = data.get('email', '').strip()
+        employee_name = data.get('employee_name', '').strip()
         
         # Validate username: no spaces allowed
         if ' ' in username:
@@ -648,24 +797,23 @@ def register():
             conn.close()
             return jsonify({'status': 'error', 'message': 'Username already exists.'}), 400
         
-        # Default password is the username itself, and force change on first login
-        password = username  # default passkey = username
-        pw_hash = hashlib.sha256(password.encode()).hexdigest()
+        import secrets
+        password = secrets.token_urlsafe(8)
+        pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         supervised_schools = ''
         if role_request == 'Supervisor':
             supervised_schools = data.get('supervised_schools', '').strip()
         conn.execute(
-            "INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change, supervised_schools) "
-            "VALUES (?, ?, ?, 'Pending', ?, ?, 1, ?)",
-            (username, pw_hash, role_request, school_office, email, supervised_schools)
+            "INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change, supervised_schools, employee_name) "
+            "VALUES (?, ?, ?, 'Pending', ?, ?, 1, ?, ?)",
+            (username, pw_hash, role_request, school_office, email, supervised_schools, employee_name)
         )
         conn.commit()
         conn.close()
         
-        # Write to Google Sheets FIRST (synchronous, authoritative source)
         ok, sheet_id, creds = _get_gsheets_config()
         if ok:
-            user_dict = {'username': username, 'password_hash': pw_hash, 'role': role_request, 'status': 'Pending', 'school_office': school_office, 'email': email, 'requires_password_change': 1}
+            user_dict = {'username': username, 'password_hash': pw_hash, 'role': role_request, 'status': 'Pending', 'school_office': school_office, 'email': email, 'requires_password_change': 1, 'employee_name': employee_name}
             db_manager._gsheets_push_with_retry(
                 db_manager.push_user_to_gsheets, sheet_id, creds, user_dict
             )
@@ -704,7 +852,8 @@ def check_auth():
         'email': session.get('email', ''),
         'role': session.get('user_role', 'Viewer'),
         'school_office': session.get('school_office', ''),
-        'supervised_schools': session.get('supervised_schools', '')
+        'supervised_schools': session.get('supervised_schools', ''),
+        'employee_name': session.get('employee_name', '')
     })
 
 @app.route('/api/logout', methods=['POST'])
@@ -748,7 +897,7 @@ def get_user_profile():
     try:
         conn = db_manager.get_db_connection()
         user = conn.execute(
-            "SELECT username, email, role, status, school_office, supervised_schools FROM users WHERE username = ?",
+            "SELECT username, email, role, status, school_office, supervised_schools, employee_name FROM users WHERE username = ?",
             (session['username'],)
         ).fetchone()
         conn.close()
@@ -766,7 +915,7 @@ def get_user_profile():
 def admin_get_users():
     try:
         conn = db_manager.get_db_connection()
-        rows = conn.execute("SELECT username, role, status, school_office, supervised_schools FROM users WHERE username != 'admin'").fetchall()
+        rows = conn.execute("SELECT username, role, status, school_office, supervised_schools, employee_name FROM users WHERE username != 'admin'").fetchall()
         conn.close()
         users = [dict(r) for r in rows]
         return jsonify({'status': 'success', 'users': users})
@@ -836,6 +985,138 @@ def admin_reject_user(username):
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+# ── Request profile change (pending admin approval) ──
+@app.route('/api/request_profile_change', methods=['POST'])
+@require_login
+def request_profile_change():
+    try:
+        data = request.json
+        current_password = data.get('current_password', '')
+        changes = data.get('changes', {})
+        username = session['username']
+
+        if not current_password:
+            return jsonify({'status': 'error', 'message': 'Current password is required.'}), 400
+
+        # Verify current password
+        conn = db_manager.get_db_connection()
+        user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        if not user:
+            conn.close()
+            return jsonify({'status': 'error', 'message': 'User not found.'}), 404
+
+        stored_hash = user['password_hash']
+        pw_bytes = current_password.encode()
+        if stored_hash.startswith('$2b$') or stored_hash.startswith('$2a$'):
+            if not bcrypt.checkpw(pw_bytes, stored_hash.encode()):
+                conn.close()
+                return jsonify({'status': 'error', 'message': 'Current password is incorrect.'}), 401
+        elif stored_hash == hashlib.sha256(pw_bytes).hexdigest():
+            pass
+        else:
+            conn.close()
+            return jsonify({'status': 'error', 'message': 'Current password is incorrect.'}), 401
+
+        applied_immediately = []
+        pending_fields = {}
+
+        # ── Password: applied immediately ──
+        if 'password' in changes:
+            new_pw = changes['password'].strip()
+            if new_pw:
+                if len(new_pw) < 8:
+                    conn.close()
+                    return jsonify({'status': 'error', 'message': 'New password must be at least 8 characters.'}), 400
+                new_hash = bcrypt.hashpw(new_pw.encode(), bcrypt.gensalt()).decode()
+                conn.execute("UPDATE users SET password_hash = ?, requires_password_change = 0 WHERE username = ?", (new_hash, username))
+                applied_immediately.append('password')
+
+        # ── Username: validate uniqueness ──
+        if 'username' in changes:
+            new_username = changes['username'].strip().lower()
+            if new_username and new_username != username:
+                existing = conn.execute("SELECT username FROM users WHERE username = ?", (new_username,)).fetchone()
+                if existing:
+                    conn.close()
+                    return jsonify({'status': 'error', 'message': 'Username already taken.'}), 400
+                pending_fields['username'] = new_username
+                pending_fields['_current_username'] = username
+
+        # ── Other fields → pending ──
+        for field in ['employee_name', 'email', 'supervised_schools']:
+            if field in changes:
+                val = changes[field]
+                if val is not None and (not isinstance(val, str) or val.strip()):
+                    pending_fields[field] = val.strip() if isinstance(val, str) else val
+
+        pending_id = None
+        if pending_fields:
+            # Add current username so apply knows which row to update (even if username changes)
+            if '_current_username' not in pending_fields:
+                pending_fields['_current_username'] = username
+            pending_id = db_manager.create_pending_change(username, pending_fields)
+
+        conn.close()
+
+        # Sync GSheets for password change (immediate)
+        if 'password' in applied_immediately:
+            ok, sheet_id, creds = _get_gsheets_config()
+            if ok:
+                updated_user = dict(user)
+                updated_user['password_hash'] = 'UPDATED'
+                db_manager._gsheets_push_with_retry(
+                    db_manager.push_user_to_gsheets, sheet_id, creds, updated_user
+                )
+
+        msg_parts = []
+        if applied_immediately:
+            msg_parts.append(f"{', '.join(applied_immediately)} updated successfully")
+        if pending_id:
+            msg_parts.append("other changes submitted for admin approval")
+        msg = '. '.join(msg_parts) + '.' if msg_parts else 'No changes to apply.'
+
+        return jsonify({
+            'status': 'success',
+            'message': msg,
+            'applied_immediately': applied_immediately,
+            'pending_id': pending_id
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/admin/pending_changes', methods=['GET'])
+@require_admin
+def admin_get_pending_changes():
+    try:
+        changes = db_manager.get_pending_changes()
+        return jsonify({'status': 'success', 'changes': changes})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/admin/approve_change/<int:change_id>', methods=['POST'])
+@require_admin
+def admin_approve_change(change_id):
+    try:
+        result = db_manager.apply_pending_change(change_id)
+        if result['status'] == 'error':
+            return jsonify({'status': 'error', 'message': result['message']}), 400
+        return jsonify({'status': 'success', 'message': 'Change approved and applied.'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/admin/reject_change/<int:change_id>', methods=['POST'])
+@require_admin
+def admin_reject_change(change_id):
+    try:
+        db_manager.reject_pending_change(change_id)
+        return jsonify({'status': 'success', 'message': 'Change rejected.'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 # ── Change password (for first login or regular) ──
 @app.route('/api/change_password', methods=['POST'])
 @require_login
@@ -849,8 +1130,18 @@ def change_password():
         if not current_password or not new_password:
             return jsonify({'status': 'error', 'message': 'Current and new password are required.'}), 400
             
-        if len(new_password) < 6:
-            return jsonify({'status': 'error', 'message': 'New password must be at least 6 characters.'}), 400
+        if len(new_password) < 8:
+            return jsonify({'status': 'error', 'message': 'New passkey must be at least 8 characters.'}), 400
+
+        import re
+        pw = new_password
+        rules = []
+        if not re.search(r'[A-Z]', pw): rules.append('uppercase letter')
+        if not re.search(r'[a-z]', pw): rules.append('lowercase letter')
+        if not re.search(r'[0-9]', pw): rules.append('number')
+        if not re.search(r'[!@#$%^&*()_+\-=\[\]{}|;:\'",.<>?/]', pw): rules.append('special character')
+        if rules:
+            return jsonify({'status': 'error', 'message': f'Passkey must contain at least one {", ".join(rules)}.'}), 400
             
         conn = db_manager.get_db_connection()
         user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
@@ -858,18 +1149,24 @@ def change_password():
         if not user:
             conn.close()
             return jsonify({'status': 'error', 'message': 'User not found.'}), 404
-            
-        cur_hash = hashlib.sha256(current_password.encode()).hexdigest()
-        if user['password_hash'] != cur_hash:
+        
+        pw_bytes = current_password.encode()
+        stored_hash = user['password_hash']
+        
+        if stored_hash.startswith('$2b$') or stored_hash.startswith('$2a$'):
+            if not bcrypt.checkpw(pw_bytes, stored_hash.encode()):
+                conn.close()
+                return jsonify({'status': 'error', 'message': 'Current passkey is incorrect.'}), 400
+        elif stored_hash != hashlib.sha256(pw_bytes).hexdigest():
             conn.close()
-            return jsonify({'status': 'error', 'message': 'Current password is incorrect.'}), 400
+            return jsonify({'status': 'error', 'message': 'Current passkey is incorrect.'}), 400
             
-        new_hash = hashlib.sha256(new_password.encode()).hexdigest()
+        new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
         conn.execute("UPDATE users SET password_hash = ?, requires_password_change = 0 WHERE username = ?", (new_hash, username))
         conn.commit()
         conn.close()
         
-        return jsonify({'status': 'success', 'message': 'Password changed successfully!'})
+        return jsonify({'status': 'success', 'message': 'Passkey changed successfully!'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -947,14 +1244,27 @@ def admin_reset_passkey():
         if not target_username or not new_password:
             return jsonify({'status': 'error', 'message': 'Username and new password are required.'}), 400
             
+        if len(new_password) < 8:
+            return jsonify({'status': 'error', 'message': 'New passkey must be at least 8 characters.'}), 400
+
+        import re
+        pw = new_password
+        rules = []
+        if not re.search(r'[A-Z]', pw): rules.append('uppercase letter')
+        if not re.search(r'[a-z]', pw): rules.append('lowercase letter')
+        if not re.search(r'[0-9]', pw): rules.append('number')
+        if not re.search(r'[!@#$%^&*()_+\-=\[\]{}|;:\'",.<>?/]', pw): rules.append('special character')
+        if rules:
+            return jsonify({'status': 'error', 'message': f'Passkey must contain at least one {", ".join(rules)}.'}), 400
+            
         conn = db_manager.get_db_connection()
         user = conn.execute("SELECT * FROM users WHERE username = ?", (target_username,)).fetchone()
         if not user:
             conn.close()
             return jsonify({'status': 'error', 'message': 'User not found.'}), 404
             
-        new_hash = hashlib.sha256(new_password.encode()).hexdigest()
-        conn.execute("UPDATE users SET password_hash = ? WHERE username = ?", (new_hash, target_username))
+        new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+        conn.execute("UPDATE users SET password_hash = ?, requires_password_change = 1 WHERE username = ?", (new_hash, target_username))
         conn.commit()
         
         # Get updated user dict for GSheets sync
@@ -968,7 +1278,7 @@ def admin_reset_passkey():
                 db_manager.push_user_to_gsheets, sheet_id, creds, dict(updated_user)
             )
             
-        return jsonify({'status': 'success', 'message': f'Passkey for "{target_username}" reset successfully!'})
+        return jsonify({'status': 'success', 'message': f'Passkey for "{target_username}" reset successfully! User will need to change on next login.'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -1119,18 +1429,28 @@ def admin_all_codes():
             f"SELECT * FROM code_lookup {where_sql} ORDER BY {sort_by} {order} LIMIT ? OFFSET ?",
             params + [per_page, offset]
         ).fetchall()
-        conn.close()
 
-        codes = []
-        for r in rows:
-            d = dict(r)
-            # Parse employees back to list for the frontend
-            emp_str = d.get('employees', '')
-            if '|||' in emp_str:
-                d['employees_list'] = emp_str.split('|||')
+        # Batch-fetch employee names from RDBMS for all codes on this page
+        codes = [dict(r) for r in rows]
+        code_list = [c['code'] for c in codes]
+        emp_map = {}
+        if code_list:
+            placeholders = ','.join(['?'] * len(code_list))
+            emp_rows = conn.execute(f"""
+                SELECT ce.code, e.name FROM code_employees ce
+                JOIN employees e ON e.id = ce.employee_id
+                WHERE ce.code IN ({placeholders})
+            """, code_list).fetchall()
+            for r in emp_rows:
+                emp_map.setdefault(r['code'], []).append(r['name'])
+        for c in codes:
+            if c['code'] in emp_map:
+                c['employees_list'] = emp_map[c['code']]
             else:
-                d['employees_list'] = emp_str.split(',')
-            codes.append(d)
+                emp_str = c.get('employees', '')
+                c['employees_list'] = emp_str.split('|||') if '|||' in emp_str else emp_str.split(',')
+
+        conn.close()
 
         total_pages = max(1, (total + per_page - 1) // per_page)
         return jsonify({
@@ -1220,6 +1540,99 @@ def generate_code():
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+
+# ─────────────────────────────────────────────
+#  BATCH CODE GENERATION
+# ─────────────────────────────────────────────
+@app.route('/api/generate_batch', methods=['POST'])
+@require_login
+def generate_batch():
+    try:
+        data = request.json
+        generations = data.get('generations', [])
+        if not generations:
+            return jsonify({'status': 'error', 'message': 'No generations provided.'}), 400
+
+        results = []
+        code_dicts = []
+        user_role = session.get('user_role', '')
+        user_school = session.get('school_office', '')
+        supervised = session.get('supervised_schools', '').strip()
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+
+        for idx, gen in enumerate(generations):
+            code = generate_6_digit_code()
+            department = gen.get('department')
+            school = gen.get('school')
+            employees = gen.get('employees', [])
+            doc_type = gen.get('doc_type')
+
+            if user_role == 'User' and user_school:
+                conn = db_manager.get_db_connection()
+                row = conn.execute(
+                    "SELECT department FROM master_data WHERE school_office = ? LIMIT 1",
+                    (user_school,)
+                ).fetchone()
+                conn.close()
+                if row:
+                    department = row['department']
+                school = user_school
+            elif user_role == 'Supervisor' and supervised:
+                schools = [s.strip() for s in supervised.split(',') if s.strip()]
+                if school and school not in schools:
+                    return jsonify({'status': 'error', 'message': f'Generation {idx+1}: you can only generate codes for your supervised schools.'}), 403
+
+            employees = [db_manager.reorder_name(e) for e in employees]
+            employees_str = '|||'.join(employees)
+            code_dicts.append({
+                'code': code,
+                'department': department or '',
+                'school_office': school or '',
+                'employees': employees_str,
+                'doc_type': doc_type or '',
+                'generated_at': timestamp
+            })
+
+            basename = f"code_{timestamp}_{idx}"
+            results.append({
+                'code': code,
+                'department': department,
+                'school': school,
+                'employees': employees,
+                'doc_type': doc_type,
+                'qr_image_url': None,
+                'barcode_image_url': None
+            })
+
+        save_code_lookup_batch(code_dicts)
+
+        ts = datetime.now().strftime('%Y%m%d%H%M%S')
+        for idx, r in enumerate(results):
+            basename = f"code_{ts}_{idx}"
+            qr_img = generate_qr_image(r['code'])
+            qr_path = os.path.join(QR_FOLDER, f"{basename}_qr.png")
+            qr_img.save(qr_path)
+
+            bc_img = generate_barcode_image(r['code'])
+            bc_path = os.path.join(QR_FOLDER, f"{basename}_barcode.png")
+            bc_img.save(bc_path)
+
+            combined_w = max(qr_img.width, bc_img.width)
+            combined_h = qr_img.height + bc_img.height
+            combined = Image.new('RGB', (combined_w, combined_h), 'white')
+            combined.paste(qr_img, ((combined_w - qr_img.width) // 2, 0))
+            combined.paste(bc_img, ((combined_w - bc_img.width) // 2, qr_img.height))
+            combined_path = os.path.join(QR_FOLDER, f"{basename}.png")
+            combined.save(combined_path)
+
+            results[idx]['qr_image_url'] = f"/static/qr_generated/{basename}_qr.png"
+            results[idx]['barcode_image_url'] = f"/static/qr_generated/{basename}_barcode.png"
+            results[idx]['image_url'] = f"/static/qr_generated/{basename}.png"
+
+        return jsonify({'status': 'success', 'results': results, 'count': len(results)})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 # ─────────────────────────────────────────────
@@ -1391,6 +1804,12 @@ def log_scan():
             updated_rows_ids = []
             slot_updated     = 1
 
+            # Resolve employee IDs once
+            emp_id_map = {}
+            emp_ids_list = _resolve_employee_ids(conn, employees, lookup['school'])
+            for name, eid in emp_ids_list:
+                emp_id_map[name] = eid
+
             for emp in employees:
                 row = conn.execute(
                     "SELECT * FROM routing_records WHERE code = ? AND employee = ?", (code, emp)
@@ -1399,11 +1818,12 @@ def log_scan():
                 if not row:
                     db_manager.ensure_routing_columns(conn, 1)
                     cursor = conn.cursor()
+                    emp_id = emp_id_map.get(emp)
                     cursor.execute(
                         "INSERT INTO routing_records "
-                        "(department, school_office, employee, code, receiving_office_1, receiver_name_1, timestamp_1) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (lookup['department'], lookup['school'], emp, code,
+                        "(department, school_office, employee, employee_id, code, receiving_office_1, receiver_name_1, timestamp_1) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (lookup['department'], lookup['school'], emp, emp_id, code,
                          receiving_office, receiver_name, current_ts)
                     )
                     conn.commit()
@@ -1474,6 +1894,7 @@ def log_scan():
 #  ROUTING RECORDS — PAGINATED
 # ─────────────────────────────────────────────
 @app.route('/api/get_routing_records', methods=['GET'])
+@require_login
 def get_routing_records():
     try:
         page     = int(request.args.get('page', 1))
@@ -1606,6 +2027,223 @@ def get_routing_records():
                 'total_pages': total_pages
             }
         })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+# ─────────────────────────────────────────────
+#  ROUTING RECORDS — GROUPED (server-side group pagination)
+# ─────────────────────────────────────────────
+@app.route('/api/get_routing_grouped', methods=['GET'])
+@require_login
+def get_routing_grouped():
+    try:
+        page     = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 75))
+        search   = request.args.get('search', '').strip()
+        sort_by  = request.args.get('sort_by', 'last_activity')
+        order    = request.args.get('order', 'DESC').upper()
+
+        allowed_sort = {'id', 'school_office', 'employee', 'code', 'doc_type', 'status', 'last_activity'}
+        if sort_by not in allowed_sort:
+            sort_by = 'last_activity'
+        if order not in ('ASC', 'DESC'):
+            order = 'DESC'
+
+        conn = db_manager.get_db_connection()
+
+        where_sql = ""
+        params    = []
+
+        user_role   = session.get('user_role', '')
+        user_school = session.get('school_office', '')
+        supervised  = session.get('supervised_schools', '').strip()
+
+        if user_role == 'User' and user_school:
+            where_sql = "WHERE r.school_office = ?"
+            params.append(user_school)
+            if search:
+                where_sql += " AND (r.employee LIKE ? OR r.code LIKE ? OR r.department LIKE ? OR r.school_office LIKE ?)"
+                pat = f"%{search}%"
+                params += [pat, pat, pat, pat]
+
+        elif user_role == 'Supervisor' and supervised:
+            schools_list = [s.strip() for s in supervised.split(',') if s.strip()]
+            placeholders = ','.join(['?'] * len(schools_list))
+            where_sql = f"WHERE r.school_office IN ({placeholders})"
+            params.extend(schools_list)
+            if search:
+                where_sql += " AND (r.employee LIKE ? OR r.code LIKE ? OR r.department LIKE ? OR r.school_office LIKE ?)"
+                pat = f"%{search}%"
+                params += [pat, pat, pat, pat]
+
+        elif user_role == 'Guest' and user_school:
+            where_sql = "WHERE r.school_office = ?"
+            params.append(user_school)
+            if search:
+                where_sql += " AND (r.employee LIKE ? OR r.code LIKE ? OR r.department LIKE ? OR r.school_office LIKE ?)"
+                pat = f"%{search}%"
+                params += [pat, pat, pat, pat]
+
+        elif search:
+            where_sql = "WHERE (r.employee LIKE ? OR r.code LIKE ? OR r.department LIKE ? OR r.school_office LIKE ?)"
+            pat    = f"%{search}%"
+            params = [pat, pat, pat, pat]
+
+        total = conn.execute(
+            f"SELECT COUNT(DISTINCT r.code) FROM routing_records r {where_sql}", params
+        ).fetchone()[0]
+
+        offset = (page - 1) * per_page
+
+        if sort_by == 'last_activity':
+            order_clause = "MAX(r.id) DESC"
+        elif sort_by == 'employee':
+            order_clause = f"MIN(r.employee) {order}"
+        elif sort_by == 'school_office':
+            order_clause = f"r.school_office {order}"
+        elif sort_by == 'code':
+            order_clause = f"r.code {order}"
+        elif sort_by == 'status':
+            order_clause = f"r.status {order}"
+        elif sort_by == 'doc_type':
+            order_clause = f"cl.doc_type {order}"
+        else:
+            order_clause = "MAX(r.id) DESC"
+
+        groups = conn.execute(f"""
+            SELECT r.code, r.school_office, r.status,
+                   COUNT(*) as employee_count,
+                   MIN(r.employee) as first_employee,
+                   MIN(r.id) as first_id,
+                   MAX(r.id) as last_id
+            FROM routing_records r
+            LEFT JOIN code_lookup cl ON cl.code = r.code
+            {where_sql}
+            GROUP BY r.code
+            ORDER BY {order_clause}
+            LIMIT ? OFFSET ?
+        """, params + [per_page, offset]).fetchall()
+
+        codes_in_page = [g['code'] for g in groups]
+
+        doc_type_map = {}
+        if codes_in_page:
+            placeholders = ','.join(['?'] * len(codes_in_page))
+            lookup_rows = conn.execute(
+                f"SELECT code, doc_type FROM code_lookup WHERE code IN ({placeholders})", codes_in_page
+            ).fetchall()
+            doc_type_map = {row['code']: row['doc_type'] or '' for row in lookup_rows}
+
+        latest_map = {}
+        if codes_in_page:
+            placeholders = ','.join(['?'] * len(codes_in_page))
+            latest_rows = conn.execute(f"""
+                SELECT r1.* FROM routing_records r1
+                INNER JOIN (
+                    SELECT code, MAX(id) as max_id FROM routing_records
+                    WHERE code IN ({placeholders})
+                    GROUP BY code
+                ) r2 ON r1.code = r2.code AND r1.id = r2.max_id
+            """, codes_in_page).fetchall()
+            for row in latest_rows:
+                d = dict(row)
+                code = d['code']
+                latest_ts = ''
+                latest_office = ''
+                latest_receiver = ''
+                for i in range(10, 0, -1):
+                    ts = d.get(f'timestamp_{i}', '') or ''
+                    if ts.strip():
+                        latest_ts = ts
+                        latest_office = d.get(f'receiving_office_{i}', '') or '-'
+                        latest_receiver = d.get(f'receiver_name_{i}', '') or '-'
+                        break
+                latest_map[code] = {
+                    'office': latest_office,
+                    'receiver': latest_receiver,
+                    'ts': latest_ts
+                }
+
+        conn.close()
+
+        result = []
+        for g in groups:
+            d = dict(g)
+            code = d['code']
+            lm = latest_map.get(code, {})
+            result.append({
+                'code': code,
+                'school_office': d['school_office'] or '',
+                'doc_type': doc_type_map.get(code, '') or '',
+                'status': d['status'] or 'for signature',
+                'employee_count': d['employee_count'],
+                'first_employee': d['first_employee'] or '',
+                'extras': d['employee_count'] - 1,
+                'summaryOffice': lm.get('office', ''),
+                'summaryReceiver': lm.get('receiver', ''),
+                'summaryTs': lm.get('ts', '')
+            })
+
+        total_pages = max(1, (total + per_page - 1) // per_page)
+
+        return jsonify({
+            'status': 'success',
+            'groups': result,
+            'pagination': {
+                'page':        page,
+                'per_page':    per_page,
+                'total':       total,
+                'total_pages': total_pages
+            }
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+# ─────────────────────────────────────────────
+#  CODE LOOKUP — for routing slip
+# ─────────────────────────────────────────────
+@app.route('/api/get_code_lookup/<path:code>', methods=['GET'])
+@require_login
+def get_code_lookup_api(code):
+    try:
+        lookup = get_code_lookup(code)
+        if not lookup:
+            return jsonify({'status': 'error', 'message': 'Code not found'}), 404
+        return jsonify({'status': 'success', 'data': lookup})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+# ─────────────────────────────────────────────
+#  ROUTING RECORDS — BY CODE (for expanding groups)
+# ─────────────────────────────────────────────
+@app.route('/api/get_records_by_code/<path:code>', methods=['GET'])
+@require_login
+def get_records_by_code(code):
+    try:
+        conn = db_manager.get_db_connection()
+
+        rows = conn.execute(
+            "SELECT * FROM routing_records WHERE code = ? ORDER BY id ASC", (code,)
+        ).fetchall()
+
+        dtype_row = conn.execute(
+            "SELECT doc_type FROM code_lookup WHERE code = ?", (code,)
+        ).fetchone()
+        doc_type = dtype_row['doc_type'] if dtype_row else ''
+
+        conn.close()
+
+        records = []
+        for r in rows:
+            d = dict(r)
+            if not d.get('doc_type'):
+                d['doc_type'] = doc_type
+            records.append(d)
+
+        return jsonify({'status': 'success', 'records': records})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -1909,6 +2547,7 @@ def reload_excel():
         return jsonify({'status': 'error', 'message': str(e)})
 
 @app.route('/api/gsheet_status', methods=['GET'])
+@require_login
 def gsheet_status():
     """Quick-test the currently saved Google Sheets connection."""
     try:
@@ -1925,8 +2564,19 @@ def gsheet_status():
 
 
 @app.route('/api/gsheets_last_pull', methods=['GET'])
+@require_login
 def gsheets_last_pull():
     return jsonify(db_manager.get_last_pull_info())
+
+
+@app.route('/api/flush_sync', methods=['POST'])
+def flush_sync():
+    """Block until the GSheets sync queue is empty — used by beforeunload sendBeacon."""
+    try:
+        db_manager.gs_sync_queue.join()
+        return '', 204
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 @app.route('/api/bulk_sync', methods=['POST'])
@@ -2031,6 +2681,7 @@ def migrate_master_to_gsheets():
 #  DASHBOARD STATS
 # ─────────────────────────────────────────────
 @app.route('/api/dashboard_stats', methods=['GET'])
+@require_login
 def dashboard_stats():
     """Return dashboard statistics. Query params:
        doc_type — filter by document type
@@ -2149,6 +2800,7 @@ def dashboard_stats():
 #  RECENT ACTIVITY
 # ─────────────────────────────────────────────
 @app.route('/api/recent_activity', methods=['GET'])
+@require_login
 def recent_activity():
     """Return the 10 most recently scanned codes with employee count and latest office.
     Query params: doc_type — filter by document type, count_mode — 'rows' or 'schools'."""
@@ -2239,12 +2891,11 @@ def recent_activity():
 
 # ── Forgot Password ──
 @app.route('/api/forgot_password', methods=['POST'])
+@limiter.limit("3 per minute")
 def forgot_password():
     """
     Forgot password: if user exists with an email, generate a temporary password,
     save its hash with requires_password_change=1, and attempt to email it.
-    Since passwords are stored as SHA256 hashes, we cannot retrieve the original.
-    Instead we generate a new temporary password.
     """
     try:
         data = request.json
@@ -2265,17 +2916,15 @@ def forgot_password():
             conn.close()
             return jsonify({'status': 'error', 'message': 'No email address on file for this account. Contact your administrator.'}), 400
         
-        # Generate a random temporary password
         import secrets
-        temp_password = secrets.token_urlsafe(8)  # e.g. "abc123_xY"
-        temp_hash = hashlib.sha256(temp_password.encode()).hexdigest()
+        temp_password = secrets.token_urlsafe(8)
+        temp_hash = bcrypt.hashpw(temp_password.encode(), bcrypt.gensalt()).decode()
         
         conn.execute("UPDATE users SET password_hash = ?, requires_password_change = 1 WHERE username = ?",
                      (temp_hash, username))
         conn.commit()
         conn.close()
         
-        # Try to send email using SMTP settings
         smtp_enabled = db_manager.get_setting('smtp_enabled', 'False')
         smtp_server = db_manager.get_setting('smtp_server', '')
         smtp_port = db_manager.get_setting('smtp_port', '587')
@@ -2323,11 +2972,9 @@ Document Tracking System
                 'message': f'A temporary password has been sent to {email}. Please check your inbox and spam folder.'
             })
         else:
-            # Email not sent but password was reset - show temp password directly (fallback)
             return jsonify({
-                'status': 'warning',
-                'message': f'Could not send email. Your temporary password is: {temp_password}. Please change it after logging in.',
-                'temp_password': temp_password  # only shown in fallback mode
+                'status': 'error',
+                'message': 'Could not send email. Please contact your administrator for assistance.'
             })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500

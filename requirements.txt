@@ -11,3 +11,5 @@ google-auth>=2.23.0
 gunicorn>=21.2.0
 cryptography>=41.0.0
 requests>=2.31.0
+bcrypt>=4.1.0
+flask-limiter>=3.5.0

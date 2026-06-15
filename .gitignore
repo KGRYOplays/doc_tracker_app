@@ -54,3 +54,19 @@ scan_log.xlsx
 
 # Runtime lock files
 .gsheets_sync.lock
+
+# opencode IDE tooling
+.opencode/
+
+# Backups directory (plural)
+backups/
+
+# Runtime logs
+err.log
+out.log
+
+# Scratch / template files
+Routing Slip Template.docx
+
+# DB backup files
+*.bak
