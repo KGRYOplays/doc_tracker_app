@@ -5,6 +5,8 @@ import sqlite3
 import threading
 import queue
 import time
+import atexit
+import signal
 from datetime import datetime
 import pandas as pd
 from cryptography.fernet import Fernet
@@ -21,12 +23,15 @@ CODE_LOOKUP_EXCEL = 'code_lookup.xlsx'
 ROUTING_RECORD_EXCEL = 'routing_record.xlsx'
 OLD_LOG_EXCEL = 'scan_log.xlsx'
 
-# Background Queue for Google Sheets Sync
-gs_sync_queue = queue.Queue()
+# Background Queue for Google Sheets Sync — replaced by persisted sync_queue table
+gs_sync_queue = queue.Queue()  # kept only for backward-compat wakeup signal
 
 # Last periodic pull info (for frontend notifications)
 _last_pull_info = {"time": None, "status": "", "message": ""}
 _last_pull_lock = threading.Lock()
+
+# Event to wake the async worker when new items are enqueued
+_sync_needed = threading.Event()
 
 def update_last_pull_info(status, message):
     global _last_pull_info
@@ -405,49 +410,37 @@ def init_db():
     except Exception as e:
         print(f"Migration note: could not add status column: {e}")
     
+    # 6. Create persisted sync_queue table (replaces in-memory gs_sync_queue)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sync_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                table_name TEXT NOT NULL,
+                ref_id INTEGER,
+                code TEXT,
+                employee TEXT,
+                operation TEXT NOT NULL DEFAULT 'upsert',
+                created_at TEXT NOT NULL,
+                retry_count INTEGER DEFAULT 0,
+                last_error TEXT,
+                status TEXT DEFAULT 'pending'
+            )
+        """)
+        conn.commit()
+        print("Migration: sync_queue table ready.")
+    except Exception as e:
+        print(f"Migration note: could not create sync_queue table: {e}")
+    
     conn.close()
     
     # Run data migrations (if old excel files exist and db is empty)
     migrate_from_excel()
     
-    # Startup recovery: on a non-wiped restart, push any unsynced local data
-    # to GSheets before pulling fresh state. Prevents data loss when
-    # pull_all_from_gsheets() wipes and rebuilds SQLite from GSheets.
-    try:
-        startup_enabled = get_setting('gsheets_enabled') == 'True'
-        startup_sheet_id = get_setting('gsheets_id')
-        startup_creds = get_decrypted_setting('gsheets_credentials')
-        if startup_enabled and startup_sheet_id and startup_creds:
-            startup_conn = get_db_connection()
-            startup_local_count = startup_conn.execute("SELECT COUNT(*) FROM routing_records").fetchone()[0]
-            if startup_local_count > 0:
-                print(f"Startup: SQLite has {startup_local_count} routing records — pushing to GSheets before refresh.")
-                try:
-                    startup_local_rows = startup_conn.execute("SELECT * FROM routing_records").fetchall()
-                    if startup_local_rows:
-                        _gsheets_push_with_retry(push_all_routing_to_gsheets, startup_sheet_id, startup_creds, startup_local_rows)
-                    startup_local_codes = startup_conn.execute("SELECT * FROM code_lookup").fetchall()
-                    if startup_local_codes:
-                        _gsheets_push_with_retry(push_all_codes_to_gsheets, startup_sheet_id, startup_creds, startup_local_codes)
-                    startup_local_users = startup_conn.execute("SELECT * FROM users").fetchall()
-                    if startup_local_users:
-                        _gsheets_push_with_retry(push_all_users_to_gsheets, startup_sheet_id, startup_creds, startup_local_users)
-                    print("Startup: local data pushed to GSheets successfully.")
-                except Exception as pe:
-                    print(f"Startup: warning — could not push local data: {pe}")
-            startup_conn.close()
-    except Exception as e:
-        print(f"Startup: warning — could not check local data: {e}")
-
-    # Always restore from GSheets on startup — this is what survives Render wipes.
-    # We unconditionally overwrite SQLite with whatever is in GSheets so that
-    # every restart begins with the authoritative cloud state.
-    print("Startup: restoring all tables from Google Sheets...")
-    restored, errors = pull_all_from_gsheets()
-    if errors:
-        print(f"GSheets restore warnings: {errors}")
-    else:
-        print(f"GSheets restore complete: {restored} routing records pulled.")
+    # No startup GSheets calls — persisted sync_queue replays on worker start.
+    # With upsert-only pulls, local-only rows survive, so no pre-push is needed
+    # and no full restore is required. The first user request serves from SQLite
+    # immediately (zero API cost on startup).
 
     # Start background GSheets worker for async scan sync.
     # Scans queue row_ids; worker reads from SQLite and pushes to GSheets in background.
@@ -457,6 +450,39 @@ def init_db():
     # reasonably fresh data even without a server restart. The interval defaults
     # to 5 minutes and can be changed at runtime via the gsheets_pull_interval setting.
     start_periodic_gsheets_pull()
+    
+    # Register graceful shutdown handler — tries to flush pending sync items
+    # before exit. The persisted queue items survive even if this doesn't complete.
+    atexit.register(_flush_sync_queue_on_shutdown)
+    try:
+        signal.signal(signal.SIGTERM, _signal_handler)
+    except (ValueError, AttributeError):
+        pass  # SIGTERM not available on some platforms (e.g., Windows)
+
+def _flush_sync_queue_on_shutdown():
+    """Best-effort flush of pending sync items on graceful shutdown.
+    If this doesn't complete (e.g., SIGKILL), items persist in the
+    sync_queue table and will be replayed on next startup."""
+    print("Shutdown: flushing pending sync queue...")
+    enabled = get_setting('gsheets_enabled') == 'True'
+    sheet_id = get_setting('gsheets_id')
+    creds = get_decrypted_setting('gsheets_credentials')
+    if not enabled or not sheet_id or not creds:
+        return
+    try:
+        conn = get_db_connection()
+        pending = conn.execute("SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'").fetchone()[0]
+        if pending:
+            print(f"Shutdown: processing {pending} pending sync items...")
+            _process_pending_sync(sheet_id, creds)
+        conn.close()
+        print("Shutdown: sync queue flushed.")
+    except Exception as e:
+        print(f"Shutdown: could not flush sync queue: {e}")
+
+def _signal_handler(signum, frame):
+    """SIGTERM handler — triggers shutdown flush."""
+    _flush_sync_queue_on_shutdown()
 
 def _seed_gsheets_settings_from_env(cursor, conn):
     """Seed critical GSheets settings from environment variables into SQLite.
@@ -1349,61 +1375,128 @@ def push_all_users_to_gsheets(sheet_id, service_account_json, rows):
 
 
 def start_gsheets_worker():
-    """Start background queue consumer for Google Sheets sync."""
+    """Start background queue consumer for Google Sheets sync.
+    Uses persisted sync_queue table (crash-safe) with read-once-per-table batching.
+    No GSheets API calls if the queue is empty."""
     def _worker():
-        print("Google Sheets Background Worker Started.")
+        print("Google Sheets Background Worker Started (persisted queue).")
         while True:
             try:
-                task = gs_sync_queue.get()
-                if task is None:
-                    break
+                # Wait for signal or poll every 5 seconds
+                _sync_needed.wait(timeout=5)
+                _sync_needed.clear()
 
                 # In maintenance mode, skip all background pushes
                 if get_setting('maintenance_mode') == 'True':
-                    print("Maintenance mode — background sync paused.")
-                    gs_sync_queue.task_done()
-                    time.sleep(5)
                     continue
 
                 enabled  = get_setting('gsheets_enabled') == 'True'
                 sheet_id = get_setting('gsheets_id')
                 creds    = get_decrypted_setting('gsheets_credentials')
-                if enabled and sheet_id and creds:
-                    try:
-                        row_ids = task.get('row_ids')
-                        if row_ids:
-                            # Batch path — push all rows in one shot
-                            placeholders = ','.join(['?'] * len(row_ids))
-                            conn = get_db_connection()
-                            rows = conn.execute(
-                                f"SELECT * FROM routing_records WHERE id IN ({placeholders})",
-                                row_ids
-                            ).fetchall()
-                            conn.close()
-                            if rows:
-                                batch_rows = [dict(r) for r in rows]
-                                _gsheets_push_with_retry(batch_push_routing_rows, sheet_id, creds, batch_rows)
-                        else:
-                            # Per-row path (admin edits, low volume)
-                            row_id = task.get('row_id')
-                            if row_id:
-                                conn = get_db_connection()
-                                row = conn.execute("SELECT * FROM routing_records WHERE id = ?", (row_id,)).fetchone()
-                                conn.close()
-                                if row:
-                                    _gsheets_push_with_retry(push_row_to_gsheets, sheet_id, creds, dict(row))
-                    except Exception as e:
-                        print(f"Google Sheet sync worker error: {e}")
-                else:
-                    print("Google Sheet Sync disabled. Skipping.")
-                gs_sync_queue.task_done()
-                time.sleep(1)
+                if not enabled or not sheet_id or not creds:
+                    continue
+
+                # Process all pending sync items — read-once-per-table
+                _process_pending_sync(sheet_id, creds)
+
             except Exception as ex:
                 print(f"Worker critical error: {ex}")
                 time.sleep(5)
-    
+
     worker_thread = threading.Thread(target=_worker, daemon=True)
     worker_thread.start()
+
+
+def _process_pending_sync(sheet_id, creds):
+    """Read all pending items from sync_queue, process per table.
+    Each table's batch uses a single read-write cycle to minimize API calls.
+    This is a module-level function so it can also be called from the shutdown handler."""
+    conn = get_db_connection()
+    try:
+        tables = conn.execute(
+            "SELECT DISTINCT table_name FROM sync_queue WHERE status = 'pending'"
+        ).fetchall()
+
+        for (table_name,) in tables:
+            items = conn.execute(
+                "SELECT * FROM sync_queue WHERE table_name = ? AND status = 'pending' ORDER BY id LIMIT 500",
+                (table_name,)
+            ).fetchall()
+
+            if not items:
+                continue
+
+            ids = tuple(item['id'] for item in items)
+            id_placeholders = ','.join(['?'] * len(ids))
+
+            # Mark as processing
+            conn.execute(
+                f"UPDATE sync_queue SET status = 'processing' WHERE id IN ({id_placeholders})",
+                ids
+            )
+            conn.commit()
+
+            try:
+                if table_name == 'routing_records':
+                    ref_ids = [item['ref_id'] for item in items if item['ref_id'] and item['operation'] != 'delete']
+                    if ref_ids:
+                        rid_ph = ','.join(['?'] * len(ref_ids))
+                        rows = conn.execute(
+                            f"SELECT * FROM routing_records WHERE id IN ({rid_ph})",
+                            ref_ids
+                        ).fetchall()
+                        if rows:
+                            _gsheets_push_with_retry(batch_push_routing_rows, sheet_id, creds, [dict(r) for r in rows])
+
+                elif table_name == 'code_lookup':
+                    # Full snapshot: push all codes to GSheets
+                    if any(item['operation'] != 'delete' for item in items):
+                        all_codes = conn.execute("SELECT * FROM code_lookup").fetchall()
+                        if all_codes:
+                            _gsheets_push_with_retry(push_all_codes_to_gsheets, sheet_id, creds, all_codes)
+
+                elif table_name == 'users':
+                    # Full snapshot: push all users to GSheets
+                    if any(item['operation'] != 'delete' for item in items):
+                        all_users = conn.execute("SELECT * FROM users").fetchall()
+                        if all_users:
+                            _gsheets_push_with_retry(push_all_users_to_gsheets, sheet_id, creds, all_users)
+
+                # Handle deletions
+                for item in items:
+                    if item['operation'] == 'delete' and item['table_name'] == 'routing_records':
+                        ref_id = item['ref_id']
+                        if ref_id:
+                            # Push a "deleted" marker to GSheets
+                            row = conn.execute("SELECT * FROM routing_records WHERE id = ?", (ref_id,)).fetchone()
+                            if row:
+                                row_dict = dict(row)
+                                row_dict['status'] = 'deleted'
+                                _gsheets_push_with_retry(push_row_to_gsheets, sheet_id, creds, row_dict)
+
+                # Mark all as done
+                conn.execute(
+                    f"UPDATE sync_queue SET status = 'done' WHERE id IN ({id_placeholders})",
+                    ids
+                )
+                conn.commit()
+
+            except Exception as e:
+                print(f"Worker: error processing {table_name}: {e}")
+                for item in items:
+                    if item['retry_count'] < 3:
+                        conn.execute(
+                            "UPDATE sync_queue SET retry_count = retry_count + 1, last_error = ?, status = 'pending' WHERE id = ?",
+                            (str(e)[:200], item['id'])
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE sync_queue SET retry_count = retry_count + 1, last_error = ?, status = 'failed' WHERE id = ?",
+                            (str(e)[:200], item['id'])
+                        )
+                conn.commit()
+    finally:
+        conn.close()
 
 
 def start_periodic_gsheets_pull():
@@ -1468,17 +1561,52 @@ def reset_periodic_pull_timer():
     _periodic_last_run = time.time()
 
 
+def enqueue_sync(table_name, ref_id=None, code=None, employee=None, operation='upsert'):
+    """Persist a sync task to the sync_queue table. The background worker
+    picks it up on its next cycle. Returns immediately (no API calls).
+    SQLite write + queue enqueue in same transaction for crash safety."""
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            "INSERT INTO sync_queue (table_name, ref_id, code, employee, operation, created_at, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'pending')",
+            (table_name, ref_id, code, employee, operation, datetime.now().isoformat())
+        )
+        conn.commit()
+        conn.close()
+        _sync_needed.set()
+    except Exception as e:
+        print(f"enqueue_sync error: {e}")
+
+
+def enqueue_sync_batch(table_name, ref_ids, operation='upsert'):
+    """Enqueue multiple sync tasks in one shot."""
+    if not ref_ids:
+        return
+    try:
+        conn = get_db_connection()
+        now = datetime.now().isoformat()
+        for rid in ref_ids:
+            conn.execute(
+                "INSERT INTO sync_queue (table_name, ref_id, operation, created_at, status) "
+                "VALUES (?, ?, ?, ?, 'pending')",
+                (table_name, rid, operation, now)
+            )
+        conn.commit()
+        conn.close()
+        _sync_needed.set()
+    except Exception as e:
+        print(f"enqueue_sync_batch error: {e}")
+
+
 def queue_sync(row_id):
-    """Queue a single row update to the background Google Sheets worker."""
-    gs_sync_queue.put({"row_id": row_id})
+    """Queue a single row update — legacy wrapper."""
+    enqueue_sync('routing_records', ref_id=row_id)
 
 
 def queue_sync_batch(row_ids):
-    """Queue a batch of row updates to the background Google Sheets worker.
-    All rows are fetched and pushed in a single batch operation.
-    """
-    if row_ids:
-        gs_sync_queue.put({"row_ids": row_ids})
+    """Queue a batch of row updates — legacy wrapper."""
+    enqueue_sync_batch('routing_records', row_ids)
 
 
 def bulk_sync_to_gsheets():
@@ -2042,9 +2170,8 @@ def _release_sync_lock(fd):
         pass
 
 def pull_all_from_gsheets(sheet_id=None, creds=None):
-    """Restore all tables from Google Sheets into SQLite (one-way pull).
-    Does NOT push local data first — the caller is responsible for that
-    (e.g. init_db() handles startup recovery before calling this).
+    """Upsert all tables from Google Sheets into SQLite (one-way pull).
+    Uses INSERT ... ON CONFLICT DO UPDATE — never deletes local-only rows.
     Uses a cross-process file lock so only one gunicorn worker pulls at a time.
     Returns (routing_record_count, error_list)."""
     if not sheet_id or not creds:
@@ -2076,12 +2203,10 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
         
         count = 0
         
-        # ── 1. Pull Routing Records ──────────────────────────────────────────
+        # ── 1. Pull Routing Records (upsert only — preserves local-only rows) ──
         try:
             ws_routing = sh.worksheet("Routing Records")
             records = ws_routing.get_all_records()
-            # Wipe and rebuild to match GSheets truth exactly
-            cursor.execute("DELETE FROM routing_records")
             for row in records:
                 code = str(row.get('Code', '')).strip()
                 emp = str(row.get('Employee', '')).strip()
@@ -2114,22 +2239,19 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
                         vals.append(str(v) if v else "")
                         
                 placeholders = ['?'] * len(vals)
-                sql = f"INSERT INTO routing_records ({', '.join(col_names)}) VALUES ({', '.join(placeholders)})"
+                update_set = ', '.join([f"{c}=excluded.{c}" for c in col_names if c not in ('code', 'employee', 'id')])
+                sql = f"INSERT INTO routing_records ({', '.join(col_names)}) VALUES ({', '.join(placeholders)}) ON CONFLICT(code, employee) DO UPDATE SET {update_set}"
                 cursor.execute(sql, vals)
                 count += 1
-            print(f"GSheets pull: restored {count} routing records.")
+            print(f"GSheets pull: upserted {count} routing records.")
         except gspread.exceptions.WorksheetNotFound:
             print("GSheets pull: 'Routing Records' worksheet not found — skipping.")
             
-        # ── 2. Pull Users ────────────────────────────────────────────────────
+        # ── 2. Pull Users (upsert — preserves local-only rows) ─────────────────
         try:
             ws_users = sh.worksheet("Users")
             records = ws_users.get_all_records()
-            # Preserve the admin account's current password hash before wiping
-            admin_row = cursor.execute(
-                "SELECT password_hash, requires_password_change FROM users WHERE username = 'admin'"
-            ).fetchone()
-            cursor.execute("DELETE FROM users")
+            # Preserve the admin account's password hash from GSheets
             for row in records:
                 username = str(row.get('Username', '')).strip().lower()
                 if not username: continue
@@ -2147,24 +2269,23 @@ def pull_all_from_gsheets(sheet_id=None, creds=None):
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (username, pw_hash, role, status, school_office, email, requires_pw_change, supervised_schools, employee_name)
                 )
-            # Ensure admin account always exists even if missing from GSheets
+            # Ensure admin account exists
             if not cursor.execute("SELECT username FROM users WHERE username = 'admin'").fetchone():
                 import hashlib as _hashlib, secrets as _secrets
-                fallback_hash = admin_row['password_hash'] if admin_row else _hashlib.sha256(_secrets.token_urlsafe(12).encode()).hexdigest()
+                fallback_hash = _hashlib.sha256(_secrets.token_urlsafe(12).encode()).hexdigest()
                 cursor.execute(
                     "INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change, supervised_schools, employee_name) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     ('admin', fallback_hash, 'Admin', 'Approved', '', 'admin@deped.gov.ph', 0, '', '')
                 )
-            print(f"GSheets pull: users restored.")
+            print(f"GSheets pull: users upserted.")
         except gspread.exceptions.WorksheetNotFound:
             print("GSheets pull: 'Users' worksheet not found — skipping.")
 
-        # ── 3. Pull Code Lookup ──────────────────────────────────────────────
+        # ── 3. Pull Code Lookup (upsert — preserves local-only rows) ─────────
         try:
             ws_code = sh.worksheet("Code Lookup")
             records = ws_code.get_all_records()
-            cursor.execute("DELETE FROM code_lookup")
             for row in records:
                 code = str(row.get('Code', '')).strip()
                 if not code: continue

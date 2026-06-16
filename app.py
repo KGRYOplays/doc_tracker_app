@@ -197,16 +197,8 @@ def save_code_lookup(code, department, school, employees, doc_type):
             raise
     db_manager.trigger_excel_export()
     
-    # ── 2. Then push to GSheets (non-blocking, user sees response immediately) ──
-    code_dict = {
-        'code': code, 'department': department, 'school_office': school,
-        'employees': '|||'.join(employees), 'doc_type': doc_type, 'generated_at': gen_time
-    }
-    ok, sheet_id, creds = _get_gsheets_config()
-    if ok:
-        db_manager._gsheets_push_with_retry(
-            db_manager.push_code_to_gsheets, sheet_id, creds, code_dict
-        )
+    # ── 2. Enqueue for async GSheets push (non-blocking, zero API cost) ──
+    db_manager.enqueue_sync('code_lookup', code=code)
 
 
 def save_code_lookup_batch(code_dicts):
@@ -246,23 +238,9 @@ def save_code_lookup_batch(code_dicts):
             raise
     db_manager.trigger_excel_export()
     
-    # ── 2. Then push ALL codes (existing + new) to GSheets ──
-    ok, sheet_id, creds = _get_gsheets_config()
-    if ok:
-        for _attempt in range(3):
-            try:
-                conn = db_manager.get_db_connection()
-                all_db_rows = conn.execute("SELECT * FROM code_lookup").fetchall()
-                conn.close()
-                break
-            except _sqlite3.OperationalError as _e:
-                if 'locked' in str(_e) and _attempt < 2:
-                    _time.sleep(1 * (_attempt + 1))
-                    continue
-                raise
-        db_manager._gsheets_push_with_retry(
-            db_manager.push_all_codes_to_gsheets, sheet_id, creds, all_db_rows
-        )
+    # ── 2. Enqueue all new codes for async GSheets push ──
+    for cd in code_dicts:
+        db_manager.enqueue_sync('code_lookup', code=cd['code'])
 
 
 def get_code_lookup(code):
@@ -821,12 +799,8 @@ def register():
         conn.commit()
         conn.close()
         
-        ok, sheet_id, creds = _get_gsheets_config()
-        if ok:
-            user_dict = {'username': username, 'password_hash': pw_hash, 'role': role_request, 'status': 'Pending', 'school_office': school_office, 'email': email, 'requires_password_change': 1, 'employee_name': employee_name}
-            db_manager._gsheets_push_with_retry(
-                db_manager.push_user_to_gsheets, sheet_id, creds, user_dict
-            )
+        # Enqueue for async GSheets push
+        db_manager.enqueue_sync('users', code=username)
             
         return jsonify({'status': 'success', 'message': 'Registration request submitted! Please wait for Admin approval.'})
     except Exception as e:
@@ -952,17 +926,10 @@ def admin_approve_user(username):
             (assigned_role, supervised_schools, username)
         )
         conn.commit()
-        
-        # Get updated user dict for GSheets sync
-        updated_user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
         conn.close()
         
-        # Write to Google Sheets FIRST (synchronous, authoritative source)
-        ok, sheet_id, creds = _get_gsheets_config()
-        if ok:
-            db_manager._gsheets_push_with_retry(
-                db_manager.push_user_to_gsheets, sheet_id, creds, dict(updated_user)
-            )
+        # Enqueue for async GSheets push
+        db_manager.enqueue_sync('users', code=username)
             
         return jsonify({'status': 'success', 'message': f'Account "{username}" approved as {assigned_role}!'})
     except Exception as e:
@@ -983,13 +950,8 @@ def admin_reject_user(username):
         conn.commit()
         conn.close()
         
-        # Push rejection status to Google Sheets synchronously
-        ok, sheet_id, creds = _get_gsheets_config()
-        if ok:
-            user_dict = {'username': username, 'password_hash': 'DELETED', 'role': 'None', 'status': 'Rejected', 'school_office': '', 'email': ''}
-            db_manager._gsheets_push_with_retry(
-                db_manager.push_user_to_gsheets, sheet_id, creds, user_dict
-            )
+        # Enqueue for async GSheets push
+        db_manager.enqueue_sync('users', code=username)
             
         return jsonify({'status': 'success', 'message': f'Account request "{username}" rejected.'})
     except Exception as e:
@@ -1068,15 +1030,9 @@ def request_profile_change():
 
         conn.close()
 
-        # Sync GSheets for password change (immediate)
+        # Enqueue for async GSheets push (password change)
         if 'password' in applied_immediately:
-            ok, sheet_id, creds = _get_gsheets_config()
-            if ok:
-                updated_user = dict(user)
-                updated_user['password_hash'] = 'UPDATED'
-                db_manager._gsheets_push_with_retry(
-                    db_manager.push_user_to_gsheets, sheet_id, creds, updated_user
-                )
+            db_manager.enqueue_sync('users', code=username)
 
         msg_parts = []
         if applied_immediately:
@@ -1277,16 +1233,10 @@ def admin_reset_passkey():
         conn.execute("UPDATE users SET password_hash = ?, requires_password_change = 1 WHERE username = ?", (new_hash, target_username))
         conn.commit()
         
-        # Get updated user dict for GSheets sync
-        updated_user = conn.execute("SELECT * FROM users WHERE username = ?", (target_username,)).fetchone()
         conn.close()
         
-        # Write to Google Sheets synchronously (authoritative source)
-        ok, sheet_id, creds = _get_gsheets_config()
-        if ok:
-            db_manager._gsheets_push_with_retry(
-                db_manager.push_user_to_gsheets, sheet_id, creds, dict(updated_user)
-            )
+        # Enqueue for async GSheets push
+        db_manager.enqueue_sync('users', code=target_username)
             
         return jsonify({'status': 'success', 'message': f'Passkey for "{target_username}" reset successfully! User will need to change on next login.'})
     except Exception as e:
@@ -2300,16 +2250,8 @@ def update_record(record_id):
         conn.commit()
         conn.close()
 
-        # Push updated record to Google Sheets synchronously
-        ok, sheet_id, creds = _get_gsheets_config()
-        if ok:
-            push_conn = db_manager.get_db_connection()
-            updated = push_conn.execute("SELECT * FROM routing_records WHERE id = ?", (record_id,)).fetchone()
-            if updated:
-                db_manager._gsheets_push_with_retry(
-                    db_manager.push_row_to_gsheets, sheet_id, creds, dict(updated)
-                )
-            push_conn.close()
+        # Enqueue for async GSheets push
+        db_manager.enqueue_sync('routing_records', ref_id=record_id)
         db_manager.trigger_excel_export()
         return jsonify({'status': 'success', 'message': 'Record updated.'})
     except Exception as e:
@@ -2327,6 +2269,8 @@ def delete_record(record_id):
         conn.execute("DELETE FROM routing_records WHERE id = ?", (record_id,))
         conn.commit()
         conn.close()
+        # Enqueue deletion marker for async GSheets push
+        db_manager.enqueue_sync('routing_records', ref_id=record_id, operation='delete')
         db_manager.trigger_excel_export()
         return jsonify({'status': 'success', 'message': 'Record deleted.'})
     except Exception as e:
