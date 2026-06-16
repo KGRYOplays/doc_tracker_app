@@ -684,6 +684,22 @@
             grid-template-columns: 1fr 1fr;
             gap: 20px;
         }
+        .admin-grid {
+            display: grid;
+            gap: 20px;
+        }
+        .admin-grid-2col {
+            grid-template-columns: 1fr 1fr;
+        }
+        .admin-grid .btn {
+            padding: 10px 20px;
+        }
+        .admin-grid .btn-sm {
+            padding: 8px 16px;
+        }
+        @media (max-width: 900px) {
+            .admin-grid-2col { grid-template-columns: 1fr; }
+        }
         @media (max-width: 768px) {
             .grid-4 { grid-template-columns: repeat(2, 1fr); }
             .branding-grid { grid-template-columns: 1fr; }
@@ -2289,236 +2305,241 @@
 
         <!-- ════ TAB 4: ADMIN PANEL ════ -->
         <div id="tab-admin" class="tab-panel">
-            <!-- Account Management card (visible to all roles) -->
-            <div class="glass-card" id="accountManagementCard">
-                <div class="card-title-row">
-                    <div class="card-icon">🔐</div>
-                    <h2>Account Management</h2>
-                </div>
-                <div id="accountProfileInfo" style="display:flex; flex-direction:column; gap:4px; margin-bottom:16px; padding:12px 16px; background:var(--surface); border-radius:var(--radius-md);">
-                    <p style="margin:0; font-size:0.9rem;"><strong>Username:</strong> <span id="acctUsername"></span></p>
-                    <p style="margin:0; font-size:0.9rem;"><strong>Name:</strong> <span id="acctEmployeeName"></span></p>
-                    <p style="margin:0; font-size:0.9rem;"><strong>Email:</strong> <span id="acctEmail"></span></p>
-                    <p style="margin:0; font-size:0.9rem;"><strong>Role:</strong> <span id="acctRole"></span></p>
-                </div>
-                <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                    <button class="btn btn-primary" onclick="showEditAccountDialog()">✏️ Edit Account</button>
-                </div>
-            </div>
-            <div class="glass-card admin-card">
-                <div class="card-title-row">
-                    <div class="card-icon">👥</div>
-                    <h2>User Management</h2>
-                </div>
-                <div class="table-actions no-print">
-                    <button class="btn btn-primary" onclick="loadAdminUsers()">🔄 Refresh Users</button>
-                </div>
-                <table id="adminUsersTable" style="width:100%; margin-top:15px;">
-                    <thead>
-                        <tr>
-                            <th>Username</th>
-                            <th>Employee Name</th>
-                            <th>Role</th>
-                            <th>School/Office</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="adminUsersBody">
-                        <tr><td colspan="6" class="empty-list" style="text-align:center;">Load users to manage.</td></tr>
-                    </tbody>
-                </table>
-                <div id="pendingChangesSection" style="margin-top:20px; display:none;">
-                    <div class="card-title-row" style="margin-bottom:12px;">
-                        <div class="card-icon">⏳</div>
-                        <h3 style="font-size:1rem;">Pending Profile Changes</h3>
+            <div class="admin-grid" style="gap:20px;">
+                <!-- Row 1: Account Mgmt + Maintenance Mode side by side -->
+                <div class="admin-grid admin-grid-2col">
+                    <div class="glass-card" id="accountManagementCard">
+                        <div class="card-title-row">
+                            <div class="card-icon">🔐</div>
+                            <h2>Account</h2>
+                        </div>
+                        <div id="accountProfileInfo" style="display:flex;flex-direction:column;gap:4px;margin-bottom:14px;padding:10px 14px;background:var(--surface);border-radius:var(--radius-md);font-size:0.85rem;">
+                            <p style="margin:0;"><strong>Username:</strong> <span id="acctUsername"></span></p>
+                            <p style="margin:0;"><strong>Name:</strong> <span id="acctEmployeeName"></span></p>
+                            <p style="margin:0;"><strong>Email:</strong> <span id="acctEmail"></span></p>
+                            <p style="margin:0;"><strong>Role:</strong> <span id="acctRole"></span></p>
+                        </div>
+                        <button class="btn btn-primary" onclick="showEditAccountDialog()" title="Update your profile, password, or supervised schools">✏️ Edit Account</button>
                     </div>
-                    <table style="width:100%;">
+                    <div class="glass-card admin-card" id="maintenanceModeCard">
+                        <div class="card-title-row">
+                            <div class="card-icon">🛠️</div>
+                            <h2>Maintenance</h2>
+                        </div>
+                        <p style="color:var(--text-muted);font-size:0.8rem;margin-bottom:10px;">Only admins can scan/generate codes. Sync paused for safe GSheets editing.</p>
+                        <div class="toggle-container">
+                            <span class="toggle-label" id="maintenanceLabel" style="font-size:0.85rem;">🔴 OFF</span>
+                            <label class="switch">
+                                <input type="checkbox" id="maintenanceToggle" onchange="toggleMaintenanceMode()">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div id="maintenanceInfo" style="display:none;margin-top:10px;padding:10px;background:rgba(255,193,7,0.1);border:1px solid rgba(255,193,7,0.3);border-radius:var(--radius-md);font-size:0.8rem;color:var(--warning);">
+                            ⚠️ GSheets edits are safe. Non-admins are blocked. Turn off when done.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 2: User Management (full width) -->
+                <div class="glass-card admin-card">
+                    <div class="card-title-row">
+                        <div class="card-icon">👥</div>
+                        <h2>User Management</h2>
+                    </div>
+                    <div class="table-actions no-print">
+                        <button class="btn btn-primary" onclick="loadAdminUsers()" title="Reload the user management table">🔄 Refresh Users</button>
+                    </div>
+                    <table id="adminUsersTable" style="width:100%;margin-top:12px;">
                         <thead>
                             <tr>
                                 <th>Username</th>
-                                <th>Changes</th>
-                                <th>Requested</th>
+                                <th>Employee Name</th>
+                                <th>Role</th>
+                                <th>School/Office</th>
+                                <th>Status</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
-                        <tbody id="pendingChangesBody">
-                            <tr><td colspan="4" class="empty-list" style="text-align:center;">No pending changes.</td></tr>
+                        <tbody id="adminUsersBody">
+                            <tr><td colspan="6" class="empty-list" style="text-align:center;">Load users to manage.</td></tr>
                         </tbody>
                     </table>
+                    <div id="pendingChangesSection" style="margin-top:16px;display:none;">
+                        <div class="card-title-row" style="margin-bottom:8px;">
+                            <div class="card-icon">⏳</div>
+                            <h3 style="font-size:0.9rem;">Pending Profile Changes</h3>
+                        </div>
+                        <table style="width:100%;font-size:0.85rem;">
+                            <thead>
+                                <tr>
+                                    <th>Username</th>
+                                    <th>Changes</th>
+                                    <th>Requested</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pendingChangesBody">
+                                <tr><td colspan="4" class="empty-list" style="text-align:center;">No pending changes.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-            </div>
-            <div class="glass-card admin-card">
-                <div class="card-title-row">
-                    <div class="card-icon">⚙️</div>
-                    <h2>Google Sheets Integration</h2>
-                </div>
-                <div class="toggle-container">
-                    <span class="toggle-label">Activate Live Google Sheets Sync</span>
-                    <label class="switch">
-                        <input type="checkbox" id="gsheets_enabled" onchange="saveSettings()">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:15px;">
-                    <button class="btn btn-secondary" onclick="testSheetConnection()" style="padding:10px 20px;">🔌 Test Connection</button>
-                    <button class="btn btn-add-sheet" onclick="bulkSyncSheets()" id="bulkSyncBtn" style="padding:10px 20px; margin-bottom:0;">📤 Bulk Sync</button>
-                </div>
-                <div id="configStatus" style="padding:12px; background:rgba(255,255,255,0.02); border:1px solid var(--glass-border); border-radius:var(--radius-md); margin-bottom:15px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-                        <div>
-                            <span id="credStatus" style="color:var(--success); font-weight:600;">✅ Google Sheets configured</span>
-                            <span id="credMissing" style="color:var(--warning); font-weight:600;">⚠️ Not configured</span>
+
+                <!-- Row 3: Google Sheets + DB Sync side by side -->
+                <div class="admin-grid admin-grid-2col">
+                    <div class="glass-card admin-card">
+                        <div class="card-title-row">
+                            <div class="card-icon">⚙️</div>
+                            <h2>Google Sheets</h2>
+                        </div>
+                        <div class="toggle-container">
+                            <span class="toggle-label" style="font-size:0.85rem;">Live Sync</span>
+                            <label class="switch">
+                                <input type="checkbox" id="gsheets_enabled" onchange="saveSettings()">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;">
+                            <button class="btn btn-secondary" onclick="testSheetConnection()" title="Verify Google Sheets credentials and connectivity">🔌 Test</button>
+                            <button class="btn btn-primary" onclick="bulkSyncSheets()" id="bulkSyncBtn" title="Manually push all records to Google Sheets">📤 Bulk Sync</button>
+                        </div>
+                        <div id="configStatus" style="padding:10px;background:rgba(255,255,255,0.02);border:1px solid var(--glass-border);border-radius:var(--radius-md);font-size:0.82rem;">
+                            <div>
+                                <span id="credStatus" style="color:var(--success);font-weight:600;">✅ Configured</span>
+                                <span id="credMissing" style="color:var(--warning);font-weight:600;">⚠️ Not configured</span>
+                            </div>
+                            <div style="margin-top:6px;">
+                                <span id="bulkSyncStatus" style="color:var(--text-muted);"></span>
+                            </div>
                         </div>
                     </div>
-                    <div style="margin-top:8px;">
-                        <span id="bulkSyncStatus" style="font-size:0.82rem; color:var(--text-muted);"></span>
+                    <div class="glass-card admin-card">
+                        <div class="card-title-row">
+                            <div class="card-icon">🔄</div>
+                            <h2>DB Sync</h2>
+                        </div>
+                        <p style="color:var(--text-muted);font-size:0.8rem;margin-bottom:10px;">Backup, restore, or push local data to your cloud instance.</p>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                            <button class="btn btn-secondary" onclick="exportLocalDB()" id="btnExport" title="Download a JSON backup of the entire database">📥 Export DB</button>
+                            <input type="file" id="importFileInput" accept=".json" style="display:none;" onchange="importLocalDB(this)">
+                            <button class="btn btn-secondary" onclick="document.getElementById('importFileInput').click()" title="Restore database from a JSON backup file">📤 Import DB</button>
+                        </div>
+                        <details style="font-size:0.82rem;">
+                            <summary style="cursor:pointer;color:var(--text-muted);">☁️ Push to Cloud (advanced)</summary>
+                            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                                <button class="btn btn-primary btn-sm" onclick="showCloudPushDialog()" id="btnPushCloud" title="Push local database to your Render cloud instance">☁️ Push Now</button>
+                            </div>
+                        </details>
+                        <div id="syncStatus" style="margin-top:10px;padding:10px;background:rgba(255,255,255,0.02);border:1px solid var(--glass-border);border-radius:var(--radius-md);font-size:0.82rem;min-height:36px;">
+                            <span style="color:var(--text-muted);">Ready.</span>
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="glass-card admin-card" id="maintenanceModeCard">
-                <div class="card-title-row">
-                    <div class="card-icon">🛠️</div>
-                    <h2>Maintenance Mode</h2>
-                </div>
-                <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:12px;">
-                    When enabled, only admins can scan and generate codes.
-                    Periodic sync is paused so you can safely edit data in Google Sheets.
-                </p>
-                <div class="toggle-container">
-                    <span class="toggle-label" id="maintenanceLabel">🔴 Maintenance Mode is OFF</span>
-                    <label class="switch">
-                        <input type="checkbox" id="maintenanceToggle" onchange="toggleMaintenanceMode()">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div id="maintenanceInfo" style="display:none; margin-top:12px; padding:12px; background:rgba(255,193,7,0.1); border:1px solid rgba(255,193,7,0.3); border-radius:var(--radius-md);">
-                    <p style="margin:0; font-size:0.85rem; color:var(--warning);">
-                        ⚠️ You can safely edit Google Sheets. Non-admin users cannot scan or generate codes.
-                        Periodic sync is paused. Turn off maintenance mode when done.
-                    </p>
-                </div>
-            </div>
-            <div class="glass-card">
-                <div class="card-title-row">
-                    <div class="card-icon">🎨</div>
-                    <h2>System Branding</h2>
-                </div>
-                <div class="branding-grid">
-                    <div class="branding-col">
-                        <div class="form-group">
-                            <label>Government Agency Logo</label>
-                            <div style="display:flex; align-items:center; gap:20px; flex-wrap:wrap;">
-                                <div style="width:90px;height:90px;border:2px dashed var(--glass-border);border-radius:12px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.05);flex-shrink:0;" id="logoPreviewBox">
-                                    <span id="logoPreviewPlaceholder" style="font-size:2rem;color:var(--text-muted);opacity:0.4;">🏛️</span>
-                                    <img id="logoPreviewImg" src="" alt="Logo preview" style="max-width:100%;max-height:100%;display:none;object-fit:contain;">
+
+                <!-- Row 4: System Branding (full width) -->
+                <div class="glass-card">
+                    <div class="card-title-row">
+                        <div class="card-icon">🎨</div>
+                        <h2>System Branding</h2>
+                    </div>
+                    <div class="branding-grid">
+                        <div class="branding-col">
+                            <div class="form-group">
+                                <label>Government Agency Logo</label>
+                                <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+                                    <div style="width:80px;height:80px;border:2px dashed var(--glass-border);border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.05);flex-shrink:0;" id="logoPreviewBox">
+                                        <span id="logoPreviewPlaceholder" style="font-size:1.6rem;color:var(--text-muted);opacity:0.4;">🏛️</span>
+                                        <img id="logoPreviewImg" src="" alt="Logo preview" style="max-width:100%;max-height:100%;display:none;object-fit:contain;">
+                                    </div>
+                                    <div>
+                                        <input type="file" id="logoFileInput" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none;" onchange="uploadFile('logoFileInput','/api/upload_logo','logo')">
+                                        <button class="btn btn-secondary" onclick="document.getElementById('logoFileInput').click()" title="Upload a square PNG logo (max 200KB)">📁 Choose Logo</button>
+                                        <button class="btn btn-secondary" onclick="removeFile('/api/upload_logo',{remove:true})" id="removeLogoBtn" style="display:none;" title="Remove the current logo">🗑️ Remove Logo</button>
+                                        <p style="color:var(--text-muted);font-size:0.7rem;margin-top:4px;">Square PNG, max 200KB</p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <input type="file" id="logoFileInput" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none;" onchange="uploadLogo()">
-                                    <button class="btn btn-secondary" onclick="document.getElementById('logoFileInput').click()" style="width:auto;padding:10px 20px;">📁 Choose Logo Image</button>
-                                    <button class="btn btn-secondary" onclick="removeLogo()" id="removeLogoBtn" style="width:auto;padding:10px 20px;display:none;">🗑️ Remove Logo</button>
-                                    <p style="color:var(--text-muted);font-size:0.72rem;margin-top:6px;">Recommended: Square PNG, max 200KB</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Header Line 2</label>
+                                <input type="text" id="header_line_2" placeholder="Department of Education - NCR" style="width:100%;">
+                            </div>
+                            <div class="form-group">
+                                <label>System Title</label>
+                                <input type="text" id="system_title" placeholder="Document Tracking System" style="width:100%;">
+                            </div>
+                            <div class="form-group">
+                                <label>Upload Custom Font</label>
+                                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                    <input type="file" id="fontFileInput" accept=".ttf,.woff,.woff2,.otf" style="display:none;" onchange="uploadFile('fontFileInput','/api/upload_font','font')">
+                                    <button class="btn btn-secondary btn-sm" onclick="document.getElementById('fontFileInput').click()" title="Upload a .ttf/.woff/.otf font file">📁 Choose Font</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="removeFont()" id="removeFontBtn" style="display:none;" title="Remove the custom font">🗑️ Remove Font</button>
+                                    <span id="fontStatus" style="font-size:0.75rem;color:var(--text-muted);"></span>
+                                </div>
+                            </div>
+                            <div class="form-group" id="brandingBgGroup">
+                                <label>Title Bar Background</label>
+                                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                    <input type="file" id="titleBgFileInput" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" style="display:none;" onchange="uploadFile('titleBgFileInput','/api/upload_title_bg','image')">
+                                    <button class="btn btn-secondary btn-sm" onclick="document.getElementById('titleBgFileInput').click()" title="Upload a background image for the title bar">📁 Choose Image</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="removeFile('/api/upload_title_bg',{remove:true})" id="removeTitleBgBtn" style="display:none;" title="Remove the background image">🗑️ Remove Image</button>
+                                    <span id="titleBgStatus" style="font-size:0.75rem;color:var(--text-muted);"></span>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <input type="checkbox" id="title_glow_enabled" style="width:16px;height:16px;accent-color:var(--primary);cursor:pointer;">
+                                    <label for="title_glow_enabled" style="margin:0;cursor:pointer;font-size:0.85rem;">Enable Title Glow &amp; Shadow</label>
                                 </div>
                             </div>
                         </div>
-                        <div class="form-group">
-                            <label>Header Line 2</label>
-                            <input type="text" id="header_line_2" placeholder="Department of Education - NCR" style="width:100%;">
-                        </div>
-                        <div class="form-group">
-                            <label>System Title</label>
-                            <input type="text" id="system_title" placeholder="Document Tracking System" style="width:100%;">
-                        </div>
-                        <div class="form-group">
-                            <label>Upload Custom Font</label>
-                            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                                <input type="file" id="fontFileInput" accept=".ttf,.woff,.woff2,.otf" style="display:none;" onchange="uploadFont()">
-                                <button class="btn btn-secondary" onclick="document.getElementById('fontFileInput').click()" style="width:auto;padding:8px 16px;">📁 Choose Font File</button>
-                                <button class="btn btn-secondary" onclick="removeFont()" id="removeFontBtn" style="width:auto;padding:8px 16px;display:none;">🗑️ Remove Font</button>
-                                <span id="fontStatus" style="font-size:0.78rem;color:var(--text-muted);"></span>
+                        <div class="branding-col">
+                            <div class="form-group">
+                                <label>Header Line 1</label>
+                                <input type="text" id="header_line_1" placeholder="Republic of the Philippines" style="width:100%;">
                             </div>
-                        </div>
-                        <div class="form-group" id="brandingBgGroup">
-                            <label>Title Bar Background Image</label>
-                            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                                <input type="file" id="titleBgFileInput" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" style="display:none;" onchange="uploadTitleBg()">
-                                <button class="btn btn-secondary" onclick="document.getElementById('titleBgFileInput').click()" style="width:auto;padding:8px 16px;">📁 Choose Image</button>
-                                <button class="btn btn-secondary" onclick="removeTitleBg()" id="removeTitleBgBtn" style="width:auto;padding:8px 16px;display:none;">🗑️ Remove Image</button>
-                                <span id="titleBgStatus" style="font-size:0.78rem;color:var(--text-muted);"></span>
+                            <div class="form-group">
+                                <label>Header Line 3</label>
+                                <input type="text" id="header_line_3" placeholder="Schools Division Office of Manila" style="width:100%;">
                             </div>
-                        </div>
-                        <div class="form-group">
-                            <div style="display:flex; align-items:center; gap:10px;">
-                                <input type="checkbox" id="title_glow_enabled" style="width:18px;height:18px;accent-color:var(--primary);cursor:pointer;">
-                                <label for="title_glow_enabled" style="margin:0;cursor:pointer;">Enable Title Glow &amp; Shadow</label>
+                            <div class="form-group">
+                                <label>System Title Font</label>
+                                <select id="system_title_font" style="width:100%;padding:10px;background:rgba(15,23,42,0.4);border:1px solid var(--glass-border);border-radius:var(--radius-sm);color:var(--text-main);font-size:0.85rem;">
+                                    <option value="">-- Default (Georgia) --</option>
+                                    <option value="Cinzel">Cinzel</option>
+                                    <option value="Playfair Display">Playfair Display</option>
+                                    <option value="Merriweather">Merriweather</option>
+                                    <option value="Cormorant Garamond">Cormorant Garamond</option>
+                                    <option value="Bodoni Moda">Bodoni Moda</option>
+                                    <option value="DM Serif Display">DM Serif Display</option>
+                                    <option value="Libre Baskerville">Libre Baskerville</option>
+                                    <option value="Crimson Text">Crimson Text</option>
+                                    <option value="EB Garamond">EB Garamond</option>
+                                    <option value="Spectral">Spectral</option>
+                                    <option value="Lora">Lora</option>
+                                    <option value="Prata">Prata</option>
+                                    <option value="Forum">Forum</option>
+                                    <option value="Oswald">Oswald</option>
+                                    <option value="Bebas Neue">Bebas Neue</option>
+                                    <option value="Barlow">Barlow</option>
+                                    <option value="Inter">Inter</option>
+                                    <option value="Raleway">Raleway</option>
+                                    <option value="Montserrat">Montserrat</option>
+                                    <option value="Poppins">Poppins</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Letter Spacing: <span id="letterSpacingValue">0</span>em</label>
+                                <input type="range" id="title_letter_spacing" min="-0.5" max="2" step="0.05" value="0" oninput="previewLetterSpacing(this.value)" style="width:100%;">
+                            </div>
+                            <div class="form-group">
+                                <label>Watermark Opacity: <span id="bgOpacityValue">7</span>%</label>
+                                <input type="range" id="title_bg_opacity" min="1" max="30" step="1" value="7" oninput="previewBgOpacity(this.value)" style="width:100%;">
                             </div>
                         </div>
                     </div>
-                    <div class="branding-col">
-                        <div class="form-group">
-                            <label>Header Line 1</label>
-                            <input type="text" id="header_line_1" placeholder="Republic of the Philippines" style="width:100%;">
-                        </div>
-                        <div class="form-group">
-                            <label>Header Line 3</label>
-                            <input type="text" id="header_line_3" placeholder="Schools Division Office of Manila" style="width:100%;">
-                        </div>
-                        <div class="form-group">
-                            <label>System Title Font</label>
-                            <select id="system_title_font" style="width:100%;padding:12px;background:rgba(15,23,42,0.4);border:1px solid var(--glass-border);border-radius:var(--radius-sm);color:var(--text-main);font-size:0.9rem;">
-                                <option value="">-- Default (Georgia) --</option>
-                                <option value="Cinzel">Cinzel</option>
-                                <option value="Playfair Display">Playfair Display</option>
-                                <option value="Merriweather">Merriweather</option>
-                                <option value="Cormorant Garamond">Cormorant Garamond</option>
-                                <option value="Bodoni Moda">Bodoni Moda</option>
-                                <option value="DM Serif Display">DM Serif Display</option>
-                                <option value="Libre Baskerville">Libre Baskerville</option>
-                                <option value="Crimson Text">Crimson Text</option>
-                                <option value="EB Garamond">EB Garamond</option>
-                                <option value="Spectral">Spectral</option>
-                                <option value="Lora">Lora</option>
-                                <option value="Prata">Prata</option>
-                                <option value="Forum">Forum</option>
-                                <option value="Oswald">Oswald</option>
-                                <option value="Bebas Neue">Bebas Neue</option>
-                                <option value="Barlow">Barlow</option>
-                                <option value="Inter">Inter</option>
-                                <option value="Raleway">Raleway</option>
-                                <option value="Montserrat">Montserrat</option>
-                                <option value="Poppins">Poppins</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Title Letter Spacing: <span id="letterSpacingValue">0</span>em</label>
-                            <input type="range" id="title_letter_spacing" min="-0.5" max="2" step="0.05" value="0" oninput="previewLetterSpacing(this.value)" style="width:100%;">
-                        </div>
-                        <div class="form-group">
-                            <label>Watermark Transparency: <span id="bgOpacityValue">7</span>%</label>
-                            <input type="range" id="title_bg_opacity" min="1" max="30" step="1" value="7" oninput="previewBgOpacity(this.value)" style="width:100%;">
-                        </div>
+                    <div style="margin-top:14px;text-align:right;">
+                        <button class="btn btn-primary" onclick="saveBranding()" title="Apply title, font, and style settings">💾 Save Branding</button>
                     </div>
-                </div>
-                <div style="margin-top:18px; text-align:right;">
-                    <button class="btn btn-primary" onclick="saveBranding()" style="padding:10px 20px;">💾 Save Branding</button>
-                </div>
-            </div>
-            <div class="glass-card admin-card">
-                <div class="card-title-row">
-                    <div class="card-icon">🔄</div>
-                    <h2>Local ↔ Cloud Database Sync</h2>
-                </div>
-                <p style="color:var(--text-muted); margin-bottom:18px; font-size:0.85rem;">
-                    Sync your local database (<code>127.0.0.1:5000</code>) to the Render cloud instance. Use this when working offline and you want to push your data to the cloud.
-                </p>
-                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px;">
-                    <button class="btn btn-primary" onclick="exportLocalDB()" id="btnExport" style="padding:10px 20px;">📥 Export Local Database</button>
-                    <button class="btn btn-secondary" onclick="document.getElementById('importFileInput').click()" style="padding:10px 20px;">📤 Import Database (from JSON)</button>
-                    <input type="file" id="importFileInput" accept=".json" style="display:none;" onchange="importLocalDB(this)">
-                    <button class="btn btn-primary" onclick="showCloudPushDialog()" id="btnPushCloud" style="padding:10px 20px;">☁️ Push to Cloud</button>
-                </div>
-                <div id="syncStatus" style="padding:12px; background:rgba(255,255,255,0.02); border:1px solid var(--glass-border); border-radius:var(--radius-md); min-height:40px;">
-                    <span style="color:var(--text-muted); font-size:0.82rem;">Ready. Choose an action above.</span>
                 </div>
             </div>
         </div>
@@ -2641,8 +2662,83 @@
             <div style="width:40px;height:40px;margin:0 auto;border:4px solid var(--glass-border);border-top:4px solid var(--primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
         </div>
     </div>
+
+    <!-- Slip Editor Modal -->
+    <div id="slipEditorModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);z-index:9999;align-items:center;justify-content:center;border-radius:0;">
+        <div id="slipEditorContent" style="background:var(--bg-primary);border-radius:var(--radius-md);max-width:1000px;width:95%;max-height:90vh;overflow-y:auto;padding:24px;position:relative;box-shadow:0 25px 50px rgba(0,0,0,0.5);border:1px solid var(--glass-border);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid var(--glass-border);">
+                <h2 id="slipModalTitle" style="margin:0;font-size:1.3rem;">📄 DOCUMENT TRACKING SLIP</h2>
+                <button onclick="closeSlipModal()" style="background:transparent;border:none;color:var(--text-muted);font-size:1.5rem;cursor:pointer;padding:4px 8px;line-height:1;">✖</button>
+            </div>
+
+            <div id="slipModalBody">
+                <!-- Populated by JS -->
+            </div>
+
+            <div id="slipModalFooter" style="display:flex;gap:12px;justify-content:flex-end;margin-top:24px;padding-top:16px;border-top:1px solid var(--glass-border);flex-wrap:wrap;">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
+
     <style>
         @keyframes spin { to { transform: rotate(360deg); } }
+        #slipEditorContent input, #slipEditorContent select {
+            background:rgba(15,23,42,0.4);
+            border:1px solid var(--glass-border);
+            border-radius:6px;
+            padding:4px 8px;
+            color:var(--text-main);
+            font-size:0.8rem;
+            width:100%;
+            box-sizing:border-box;
+            transition:all 0.3s;
+        }
+        #slipEditorContent input:focus, #slipEditorContent select:focus {
+            border-color:var(--primary);
+            box-shadow:0 0 10px rgba(99,102,241,0.2);
+            outline:none;
+        }
+        #slipEditorContent input:disabled, #slipEditorContent select:disabled {
+            opacity:0.7;
+            cursor:not-allowed;
+        }
+        .slip-record-section {
+            margin-bottom:20px;
+            padding:16px;
+            background:rgba(15,23,42,0.15);
+            border-radius:var(--radius-md);
+            border:1px solid var(--glass-border);
+        }
+        .slip-record-section h4 {
+            margin:0 0 12px 0;
+            font-size:0.95rem;
+            color:var(--primary);
+            padding-bottom:8px;
+            border-bottom:1px solid var(--glass-border);
+        }
+        .slip-routing-table {
+            width:100%;
+            border-collapse:collapse;
+            font-size:0.8rem;
+        }
+        .slip-routing-table th {
+            background:rgba(15,23,42,0.5);
+            color:var(--text-muted);
+            padding:8px;
+            text-align:left;
+            font-weight:600;
+            font-size:0.75rem;
+            text-transform:uppercase;
+            letter-spacing:0.5px;
+        }
+        .slip-routing-table th:first-child { text-align:center; width:40px; }
+        .slip-routing-table td {
+            padding:6px 8px;
+            border-bottom:1px solid var(--glass-border);
+            vertical-align:middle;
+        }
+        .slip-routing-table td:first-child { text-align:center; }
     </style>
 
     <script>
@@ -4004,7 +4100,7 @@
                     '<td>' + (g.summaryReceiver || "-") + '</td>' +
                     '<td class="table-time">' + (g.summaryTs || "-") + '</td>' +
                     '<td>-</td>' +
-                    '<td><button onclick="event.stopPropagation();printRoutingSlip(\'' + g.code.replace(/'/g, "\\'") + '\')" style="border:none;background:transparent;color:var(--primary);cursor:pointer;font-size:0.75rem;font-weight:600;padding:4px 8px;">📄 Slip</button></td>' +
+                    '<td><button onclick="event.stopPropagation();showSlipModal(\'' + g.code.replace(/'/g, "\\'") + '\')" style="border:none;background:transparent;color:var(--primary);cursor:pointer;font-size:0.75rem;font-weight:600;padding:4px 8px;">📄 Slip</button></td>' +
                     '</tr>');
 
                 // Already-expanded children
@@ -4041,7 +4137,7 @@
                                 ? '<input type="text" value="' + (r.remarks || '') + '" onchange="saveRemarks(' + r.id + ', this.value)" placeholder="Add remark..." style="width:150px;background:rgba(15,23,42,0.4);border:1px solid var(--glass-border);border-radius:6px;padding:4px 8px;color:var(--text-main);font-size:0.8rem;text-align:center;transition:all 0.3s;" onfocus="this.style.borderColor=\'var(--primary)\';this.style.boxShadow=\'0 0 10px rgba(99,102,241,0.2)\';" onblur="this.style.borderColor=\'var(--glass-border)\';this.style.boxShadow=\'none\';">'
                                 : '<span style="color:var(--text-muted);font-size:0.8rem;">' + (r.remarks || '-') + '</span>') +
                             '</td>' +
-                            '<td><button onclick="event.stopPropagation();printRoutingSlip(\'' + r.code.replace(/'/g, "\\'") + '\')" style="border:none;background:transparent;color:var(--primary);cursor:pointer;font-size:0.75rem;font-weight:600;padding:4px 8px;">📄 Slip</button></td>' +
+                            '<td><button onclick="event.stopPropagation();showSlipModal(\'' + r.code.replace(/'/g, "\\'") + '\')" style="border:none;background:transparent;color:var(--primary);cursor:pointer;font-size:0.75rem;font-weight:600;padding:4px 8px;">📄 Slip</button></td>' +
                             '</tr>');
                     });
                 }
@@ -4132,7 +4228,7 @@
                         ? '<input type="text" value="' + (r.remarks || '') + '" onchange="saveRemarks(' + r.id + ', this.value)" placeholder="Add remark..." style="width:150px;background:rgba(15,23,42,0.4);border:1px solid var(--glass-border);border-radius:6px;padding:4px 8px;color:var(--text-main);font-size:0.8rem;text-align:center;transition:all 0.3s;" onfocus="this.style.borderColor=\'var(--primary)\';this.style.boxShadow=\'0 0 10px rgba(99,102,241,0.2)\';" onblur="this.style.borderColor=\'var(--glass-border)\';this.style.boxShadow=\'none\';">'
                         : '<span style="color:var(--text-muted);font-size:0.8rem;">' + (r.remarks || '-') + '</span>') +
                     '</td>' +
-                    '<td><button onclick="event.stopPropagation();printRoutingSlip(\'' + r.code.replace(/'/g, "\\'") + '\')" style="border:none;background:transparent;color:var(--primary);cursor:pointer;font-size:0.75rem;font-weight:600;padding:4px 8px;">📄 Slip</button></td>' +
+                    '<td><button onclick="event.stopPropagation();showSlipModal(\'' + r.code.replace(/'/g, "\\'") + '\')" style="border:none;background:transparent;color:var(--primary);cursor:pointer;font-size:0.75rem;font-weight:600;padding:4px 8px;">📄 Slip</button></td>' +
                     '</tr>');
             });
             summaryRow.insertAdjacentHTML('afterend', rows.join(''));
@@ -4278,6 +4374,188 @@
                 showToast('success', '📄 Routing slip opened for ' + code);
             }).catch(function(err) {
                 showToast('error', 'Failed to load routing slip data: ' + err.message);
+            });
+        }
+
+        // ── SLIP EDITOR MODAL ──
+        var _slipCurrentCode = '';
+        var _slipRecords = [];
+
+        function closeSlipModal() {
+            document.getElementById('slipEditorModal').style.display = 'none';
+            _slipCurrentCode = '';
+            _slipRecords = [];
+        }
+
+        function showSlipModal(code) {
+            if (!code) { showToast('error', 'No code provided.'); return; }
+            _slipCurrentCode = code;
+            var modal = document.getElementById('slipEditorModal');
+            var body = document.getElementById('slipModalBody');
+            var footer = document.getElementById('slipModalFooter');
+            document.getElementById('slipModalTitle').textContent = '📄 DOCUMENT TRACKING SLIP — ' + code;
+            body.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted);">Loading...</div>';
+            footer.innerHTML = '';
+            modal.style.display = 'flex';
+
+            Promise.all([
+                fetch('/api/get_code_lookup/' + encodeURIComponent(code)).then(function(r) { return r.json(); }),
+                fetch('/api/get_records_by_code/' + encodeURIComponent(code)).then(function(r) { return r.json(); })
+            ]).then(function(results) {
+                var lookupRes = results[0];
+                var recordsRes = results[1];
+                if (lookupRes.status !== 'success') { showToast('error', 'Code not found.'); closeSlipModal(); return; }
+
+                var data = lookupRes.data;
+                var records = (recordsRes.status === 'success') ? recordsRes.records : [];
+                _slipRecords = records;
+                var employees = (data.employees || []).join(', ');
+                var imgSrc = window.location.origin + '/api/label_image/' + code;
+                var canEdit = (currentUserRole === 'Admin' || currentUserRole === 'Supervisor');
+
+                // Info section
+                var html = '<div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap;">' +
+                    '<div style="flex:1;min-width:280px;">' +
+                    '<table style="width:100%;font-size:0.85rem;">' +
+                    '<tr><td style="font-weight:600;padding:3px 12px 3px 0;white-space:nowrap;color:var(--text-muted);">Tracking Code:</td><td style="font-weight:700;">' + code + '</td></tr>' +
+                    '<tr><td style="font-weight:600;padding:3px 12px 3px 0;white-space:nowrap;color:var(--text-muted);">Department:</td><td>' + (data.department || '-') + '</td></tr>' +
+                    '<tr><td style="font-weight:600;padding:3px 12px 3px 0;white-space:nowrap;color:var(--text-muted);">School/Office:</td><td>' + (data.school || '-') + '</td></tr>' +
+                    '<tr><td style="font-weight:600;padding:3px 12px 3px 0;white-space:nowrap;color:var(--text-muted);">Employee(s):</td><td>' + (employees || '-') + '</td></tr>' +
+                    '<tr><td style="font-weight:600;padding:3px 12px 3px 0;white-space:nowrap;color:var(--text-muted);">Document Type:</td><td>' + (data.doc_type || '-') + '</td></tr>' +
+                    '</table></div>' +
+                    '<div style="text-align:right;"><img src="' + imgSrc + '" alt="' + code + '" style="max-width:120px;height:auto;border:1px solid var(--glass-border);border-radius:6px;"></div>' +
+                    '</div>';
+
+                // Per-record routing tables
+                records.forEach(function(r) {
+                    var statusVal = r.status || 'for signature';
+                    var statusOptions = ['for signature', 'with corrections', 'released'];
+                    var statusHtml = canEdit
+                        ? '<select data-record-id="' + r.id + '" data-field="status" class="slip-status-select">' +
+                          statusOptions.map(function(s) { return '<option value="' + s + '" ' + (s === statusVal ? 'selected' : '') + '>' + s.toUpperCase() + '</option>'; }).join('') +
+                          '</select>'
+                        : '<span style="font-weight:600;">' + statusVal.toUpperCase() + '</span>';
+
+                    html += '<div class="slip-record-section">' +
+                        '<h4>👤 ' + (r.employee || 'Unknown') + '</h4>' +
+                        '<table class="slip-routing-table">' +
+                        '<thead><tr><th>#</th><th>Receiving Office</th><th>Receiver</th><th>Date/Time</th><th style="text-align:center;width:140px;">Status</th></tr></thead><tbody>';
+
+                    var hasData = false;
+                    for (var i = 1; i <= 10; i++) {
+                        var office = r['receiving_office_' + i] || '';
+                        var receiver = r['receiver_name_' + i] || '';
+                        var ts = r['timestamp_' + i] || '';
+                        if (!office && !receiver && !ts && i > 1) continue; // skip trailing empty
+                        hasData = true;
+
+                        var officeCell = canEdit
+                            ? '<input type="text" value="' + (office).replace(/"/g, '&quot;') + '" data-record-id="' + r.id + '" data-stage="' + i + '" data-field="receiving_office" placeholder="Office...">'
+                            : (office || '-');
+                        var receiverCell = canEdit
+                            ? '<input type="text" value="' + (receiver).replace(/"/g, '&quot;') + '" data-record-id="' + r.id + '" data-stage="' + i + '" data-field="receiver_name" placeholder="Receiver...">'
+                            : (receiver || '-');
+                        var tsCell = canEdit
+                            ? '<input type="text" value="' + (ts).replace(/"/g, '&quot;') + '" data-record-id="' + r.id + '" data-stage="' + i + '" data-field="timestamp" placeholder="Date/Time...">'
+                            : (ts || '-');
+                        var statusCell = (i === 1) ? statusHtml : '';
+                        html += '<tr>' +
+                            '<td>' + i + '</td>' +
+                            '<td>' + officeCell + '</td>' +
+                            '<td>' + receiverCell + '</td>' +
+                            '<td>' + tsCell + '</td>' +
+                            '<td style="text-align:center;">' + statusCell + '</td>' +
+                            '</tr>';
+                    }
+                    if (!hasData) {
+                        html += '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:12px;">No routing data for this record.</td></tr>';
+                    }
+                    html += '</tbody></table></div>';
+                });
+
+                if (records.length === 0) {
+                    html += '<div style="text-align:center;color:var(--text-muted);padding:24px;">No routing records found for this code.</div>';
+                }
+
+                body.innerHTML = html;
+
+                // Footer buttons
+                var footerHtml = '<button class="btn btn-secondary" onclick="closeSlipModal()" style="padding:10px 20px;">✖️ Close</button>' +
+                    '<button class="btn btn-primary" onclick="printSlipFromModal()" style="padding:10px 20px;">🖨️ Print</button>';
+                if (canEdit) {
+                    footerHtml = '<button class="btn btn-primary" onclick="saveSlipChanges()" style="padding:10px 20px;">💾 Save Changes</button>' +
+                        '<button class="btn btn-secondary" onclick="printSlipFromModal()" style="padding:10px 20px;">🖨️ Print</button>' +
+                        '<button class="btn btn-secondary" onclick="closeSlipModal()" style="padding:10px 20px;">✖️ Close</button>';
+                }
+                footer.innerHTML = footerHtml;
+
+            }).catch(function(err) {
+                body.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted);">Error loading data: ' + err.message + '</div>';
+                showToast('error', 'Failed to load slip data: ' + err.message);
+            });
+        }
+
+        function printSlipFromModal() {
+            var code = _slipCurrentCode;
+            closeSlipModal();
+            if (code) printRoutingSlip(code);
+        }
+
+        function saveSlipChanges() {
+            if (!_slipCurrentCode || _slipRecords.length === 0) { showToast('error', 'No data to save.'); return; }
+
+            var updates = {};
+            // Collect status changes
+            document.querySelectorAll('.slip-status-select').forEach(function(sel) {
+                var rid = sel.getAttribute('data-record-id');
+                if (!updates[rid]) updates[rid] = {};
+                updates[rid]['status'] = sel.value;
+            });
+
+            // Collect routing field changes
+            document.querySelectorAll('#slipModalBody input[data-record-id]').forEach(function(inp) {
+                var rid = inp.getAttribute('data-record-id');
+                var stage = inp.getAttribute('data-stage');
+                var field = inp.getAttribute('data-field');
+                if (!rid || !stage || !field) return;
+                var colName = field + '_' + stage;
+                if (!updates[rid]) updates[rid] = {};
+                updates[rid][colName] = inp.value;
+            });
+
+            var ids = Object.keys(updates);
+            if (ids.length === 0) { showToast('info', 'No changes to save.'); return; }
+
+            var btn = document.querySelector('#slipModalFooter .btn-primary');
+            if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving...'; }
+
+            var completed = 0;
+            var hasError = false;
+            ids.forEach(function(rid) {
+                fetch('/api/update_record/' + rid, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(updates[rid])
+                })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    completed++;
+                    if (data.status !== 'success') hasError = true;
+                    if (completed === ids.length) {
+                        if (btn) { btn.disabled = false; btn.textContent = '💾 Save Changes'; }
+                        if (hasError) showToast('warning', 'Some changes may not have saved.');
+                        else showToast('success', '✅ ' + ids.length + ' record(s) updated successfully!');
+                        refreshRecords();
+                    }
+                })
+                .catch(function(err) {
+                    completed++;
+                    hasError = true;
+                    if (completed === ids.length) {
+                        if (btn) { btn.disabled = false; btn.textContent = '💾 Save Changes'; }
+                        showToast('error', 'Error saving changes: ' + err.message);
+                    }
+                });
             });
         }
 
@@ -4769,7 +5047,7 @@
             .then(res => res.json())
             .then(data => {
                 document.getElementById('approveDialog').remove();
-                if (data.status === 'success') { showToast('success', data.message); loadAdminUsers(); }
+                if (data.status === 'success') { showToast('success', data.message); loadAdminUsers(); loadPendingChanges(); }
                 else { showToast('error', data.message || 'Approve failed'); }
             })
             .catch(err => { document.getElementById('approveDialog')?.remove(); showToast('error', 'Network error: ' + err.message); });
@@ -4781,7 +5059,7 @@
             fetch('/api/admin/reject_user/' + encodeURIComponent(username), { method: 'POST' })
             .then(res => res.json())
             .then(data => {
-                if (data.status === 'success') { showToast('success', data.message); loadAdminUsers(); }
+                if (data.status === 'success') { showToast('success', data.message); loadAdminUsers(); loadPendingChanges(); }
                 else { showToast('error', data.message || 'Reject failed'); }
             })
             .catch(err => showToast('error', 'Network error: ' + err.message));
@@ -5042,94 +5320,44 @@
         }
 
         // ── LOGO ──
-        function uploadLogo() {
-            var fileInput = document.getElementById('logoFileInput');
-            if (!fileInput.files || !fileInput.files[0]) return;
-            var formData = new FormData();
-            formData.append('logo', fileInput.files[0]);
-            fetch('/api/upload_logo', { method: 'POST', body: formData })
-            .then(function(res) { return res.json(); })
+        function uploadFile(inputId, url, fieldName) {
+            var input = document.getElementById(inputId);
+            if (!input.files || !input.files[0]) return;
+            var fd = new FormData();
+            fd.append(fieldName, input.files[0]);
+            fetch(url, { method: 'POST', body: fd })
+            .then(function(r) { return r.json(); })
             .then(function(data) {
-                if (data.status === 'success') { showToast('success', 'Logo uploaded!'); loadLogoPreview(); }
-                else { showToast('error', 'Upload failed: ' + data.message); }
+                if (data.status === 'success') { showToast('success', data.message || 'Uploaded!'); loadSettings(); }
+                else { showToast('error', 'Upload failed: ' + (data.message || 'Unknown error')); }
             })
             .catch(function(err) { showToast('error', 'Upload error: ' + err.message); });
         }
 
-        function removeLogo() {
-            fetch('/api/upload_logo', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ remove: true }) })
-            .then(function(res) { return res.json(); })
-            .then(function(data) {
-                if (data.status === 'success') { showToast('success', 'Logo removed.'); loadLogoPreview(); }
-            })
-            .catch(function(err) { showToast('error', 'Error: ' + err.message); });
-        }
-
-        function uploadFont() {
-            var input = document.getElementById('fontFileInput');
-            if (!input.files || !input.files[0]) return;
-            var fd = new FormData();
-            fd.append('font', input.files[0]);
-            fetch('/api/upload_font', { method: 'POST', body: fd })
+        function removeFile(url, body, callback) {
+            fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}) })
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 if (data.status === 'success') {
-                    showToast('success', 'Font uploaded!');
-                    loadSettings();
-                } else {
-                    showToast('error', 'Upload failed: ' + data.message);
-                }
+                    showToast('success', data.message || 'Done.');
+                    if (callback) callback();
+                    else loadSettings();
+                } else { showToast('error', data.message || 'Failed.'); }
             })
-            .catch(function(err) { showToast('error', 'Upload error: ' + err.message); });
+            .catch(function(err) { showToast('error', 'Error: ' + err.message); });
         }
 
         function removeFont() {
-            fetch('/api/remove_font', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({}) })
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (data.status === 'success') {
-                    showToast('success', 'Custom font removed.');
-                    var s = document.getElementById('custom-font-face');
-                    if (s) s.remove();
-                    loadSettings();
-                }
-            })
-            .catch(function(err) { showToast('error', 'Error: ' + err.message); });
+            removeFile('/api/remove_font', {}, function() {
+                var s = document.getElementById('custom-font-face');
+                if (s) s.remove();
+                loadSettings();
+            });
         }
 
         function previewBgOpacity(val) {
             document.getElementById('bgOpacityValue').textContent = val;
             applyTitleBg(null, val);
-        }
-
-        function uploadTitleBg() {
-            var input = document.getElementById('titleBgFileInput');
-            if (!input.files || !input.files[0]) return;
-            var fd = new FormData();
-            fd.append('image', input.files[0]);
-            fetch('/api/upload_title_bg', { method: 'POST', body: fd })
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (data.status === 'success') {
-                    showToast('success', 'Background image uploaded!');
-                    loadSettings();
-                } else {
-                    showToast('error', 'Upload failed: ' + data.message);
-                }
-            })
-            .catch(function(err) { showToast('error', 'Upload error: ' + err.message); });
-        }
-
-        function removeTitleBg() {
-            fetch('/api/upload_title_bg', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ remove: true }) })
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (data.status === 'success') {
-                    showToast('success', 'Background image removed.');
-                    loadSettings();
-                }
-            })
-            .catch(function(err) { showToast('error', 'Error: ' + err.message); });
         }
 
         function loadLogoPreview() {

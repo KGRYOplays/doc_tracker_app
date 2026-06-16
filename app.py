@@ -2218,44 +2218,59 @@ def get_records_by_code(code):
 
 
 # ─────────────────────────────────────────────
-#  EDIT / DELETE RECORDS (Admin only)
+#  EDIT / DELETE RECORDS (Admin / Supervisor)
 # ─────────────────────────────────────────────
 @app.route('/api/update_record/<int:record_id>', methods=['PUT'])
-@require_admin
+@require_login
+@require_role('Admin', 'Supervisor')
 def update_record(record_id):
     blocked, msg = _check_maintenance()
     if blocked:
         return jsonify({'status': 'error', 'message': msg}), 403
-    try:
-        data = request.json
-        conn = db_manager.get_db_connection()
+    import time as _time
+    import sqlite3 as _sqlite3
+    with scan_lock:
+        for _attempt in range(3):
+            conn = None
+            try:
+                data = request.json
+                conn = db_manager.get_db_connection()
 
-        # Fetch valid DB columns
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(routing_records)")
-        db_cols = {row[1] for row in cursor.fetchall()}
+                # Fetch valid DB columns
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(routing_records)")
+                db_cols = {row[1] for row in cursor.fetchall()}
 
-        set_parts, vals = [], []
-        for field, value in data.items():
-            if field in db_cols and field != 'id':
-                set_parts.append(f"{field} = ?")
-                vals.append(value)
+                set_parts, vals = [], []
+                for field, value in data.items():
+                    if field in db_cols and field != 'id':
+                        set_parts.append(f"{field} = ?")
+                        vals.append(value)
 
-        if not set_parts:
-            conn.close()
-            return jsonify({'status': 'error', 'message': 'No valid fields to update.'})
+                if not set_parts:
+                    return jsonify({'status': 'error', 'message': 'No valid fields to update.'})
 
-        vals.append(record_id)
-        conn.execute(f"UPDATE routing_records SET {', '.join(set_parts)} WHERE id = ?", vals)
-        conn.commit()
-        conn.close()
+                vals.append(record_id)
+                conn.execute(f"UPDATE routing_records SET {', '.join(set_parts)} WHERE id = ?", vals)
+                conn.commit()
 
-        # Enqueue for async GSheets push
-        db_manager.enqueue_sync('routing_records', ref_id=record_id)
-        db_manager.trigger_excel_export()
-        return jsonify({'status': 'success', 'message': 'Record updated.'})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)})
+                # Enqueue for async GSheets push
+                db_manager.enqueue_sync('routing_records', ref_id=record_id)
+                db_manager.trigger_excel_export()
+                return jsonify({'status': 'success', 'message': 'Record updated.'})
+            except _sqlite3.OperationalError as _e:
+                if 'locked' in str(_e) and _attempt < 2:
+                    _time.sleep(1 * (_attempt + 1))
+                    continue
+                return jsonify({'status': 'error', 'message': 'Database is busy, please try again.'})
+            except Exception as e:
+                return jsonify({'status': 'error', 'message': str(e)})
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
 
 @app.route('/api/delete_record/<int:record_id>', methods=['DELETE'])
