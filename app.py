@@ -1,5 +1,7 @@
 import os
 import io
+import time
+import sqlite3
 import pandas as pd
 import qrcode
 import random
@@ -1707,35 +1709,40 @@ def log_scan():
     blocked, msg = _check_maintenance()
     if blocked:
         return jsonify({'status': 'error', 'message': msg}), 403
+
+    data             = request.json
+    code             = data.get('scanned_data', '').strip().upper()
+    receiving_office = data.get('receiving_office', '').strip()
+    receiver_name    = data.get('receiver_name', '').strip()
+
+    # ── ROLE-BASED SCHOOL RESTRICTIONS ──
+    user_role     = session.get('user_role', '')
+    user_school   = session.get('school_office', '')
+    supervised    = session.get('supervised_schools', '').strip()
+    if user_role == 'User' and user_school:
+        receiving_office = user_school
+    elif user_role == 'Supervisor' and supervised:
+        allowed = [s.strip().lower() for s in supervised.split(',') if s.strip()]
+        if receiving_office.strip().lower() not in allowed:
+            return jsonify({'status': 'error', 'message': 'You can only scan at your supervised schools/offices.'}), 403
+
+    if not receiving_office:
+        return jsonify({'status': 'error', 'message': 'Please select a Receiving Office!'})
+
+    lookup = get_code_lookup(code)
+    if not lookup:
+        return jsonify({'status': 'error', 'message': f'Barcode "{code}" not found in database!'})
+
+    employees = [e.strip() for e in lookup['employees'] if e.strip()]
+    if not employees:
+        return jsonify({'status': 'error', 'message': 'No employees linked to this barcode!'})
+
+    current_ts       = datetime.now().strftime("%m/%d/%Y")
+    updated_rows_ids = []
+    slot_updated     = 1
+
     with scan_lock:
         try:
-            data             = request.json
-            code             = data.get('scanned_data', '').strip().upper()
-            receiving_office = data.get('receiving_office', '').strip()
-            receiver_name    = data.get('receiver_name', '').strip()
-
-            # ── ROLE-BASED SCHOOL RESTRICTIONS ──
-            user_role     = session.get('user_role', '')
-            user_school   = session.get('school_office', '')
-            supervised    = session.get('supervised_schools', '').strip()
-            if user_role == 'User' and user_school:
-                receiving_office = user_school
-            elif user_role == 'Supervisor' and supervised:
-                allowed = [s.strip().lower() for s in supervised.split(',') if s.strip()]
-                if receiving_office.strip().lower() not in allowed:
-                    return jsonify({'status': 'error', 'message': 'You can only scan at your supervised schools/offices.'}), 403
-
-            if not receiving_office:
-                return jsonify({'status': 'error', 'message': 'Please select a Receiving Office!'})
-
-            lookup = get_code_lookup(code)
-            if not lookup:
-                return jsonify({'status': 'error', 'message': f'Barcode "{code}" not found in database!'})
-
-            employees = [e.strip() for e in lookup['employees'] if e.strip()]
-            if not employees:
-                return jsonify({'status': 'error', 'message': 'No employees linked to this barcode!'})
-
             conn = db_manager.get_db_connection()
 
             # ── 1. ACCIDENTAL DOUBLE-SCAN CHECK ──────────────────────────────────
@@ -1769,10 +1776,6 @@ def log_scan():
                         })
 
             # ── 2. LOG THE ROUTING STAMP ──────────────────────────────────────────
-            current_ts       = datetime.now().strftime("%m/%d/%Y")
-            updated_rows_ids = []
-            slot_updated     = 1
-
             # Resolve employee IDs once
             emp_id_map = {}
             emp_ids_list = _resolve_employee_ids(conn, employees, lookup['school'])
@@ -1841,22 +1844,23 @@ def log_scan():
                         conn.commit()
 
             conn.close()
-
-            db_manager.queue_sync_batch(updated_rows_ids)
-            db_manager.trigger_excel_export()
-
-            return jsonify({
-                'status':    'success',
-                'message':   f'Tracked {len(employees)} employee(s) at "{receiving_office}"!',
-                'data':      employees,
-                'school':    lookup['school'],
-                'doc_type':  lookup['doc_type'],
-                'timestamp': current_ts,
-                'slot':      slot_updated
-            })
-
         except Exception as e:
             return jsonify({'status': 'error', 'message': str(e)})
+
+    # ── Post-processing (no lock needed) ──────────────────────────────────
+    if updated_rows_ids:
+        db_manager.queue_sync_batch(updated_rows_ids)
+    db_manager.trigger_excel_export()
+
+    return jsonify({
+        'status':    'success',
+        'message':   f'Tracked {len(employees)} employee(s) at "{receiving_office}"!',
+        'data':      employees,
+        'school':    lookup['school'],
+        'doc_type':  lookup['doc_type'],
+        'timestamp': current_ts,
+        'slot':      slot_updated
+    })
 
 
 # ─────────────────────────────────────────────
@@ -2227,50 +2231,48 @@ def update_record(record_id):
     blocked, msg = _check_maintenance()
     if blocked:
         return jsonify({'status': 'error', 'message': msg}), 403
-    import time as _time
-    import sqlite3 as _sqlite3
-    with scan_lock:
-        for _attempt in range(3):
-            conn = None
-            try:
-                data = request.json
-                conn = db_manager.get_db_connection()
 
-                # Fetch valid DB columns
-                cursor = conn.cursor()
-                cursor.execute("PRAGMA table_info(routing_records)")
-                db_cols = {row[1] for row in cursor.fetchall()}
+    for _attempt in range(3):
+        conn = None
+        try:
+            data = request.json
+            conn = db_manager.get_db_connection()
 
-                set_parts, vals = [], []
-                for field, value in data.items():
-                    if field in db_cols and field != 'id':
-                        set_parts.append(f"{field} = ?")
-                        vals.append(value)
+            # Fetch valid DB columns
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(routing_records)")
+            db_cols = {row[1] for row in cursor.fetchall()}
 
-                if not set_parts:
-                    return jsonify({'status': 'error', 'message': 'No valid fields to update.'})
+            set_parts, vals = [], []
+            for field, value in data.items():
+                if field in db_cols and field != 'id':
+                    set_parts.append(f"{field} = ?")
+                    vals.append(value)
 
-                vals.append(record_id)
-                conn.execute(f"UPDATE routing_records SET {', '.join(set_parts)} WHERE id = ?", vals)
-                conn.commit()
+            if not set_parts:
+                return jsonify({'status': 'error', 'message': 'No valid fields to update.'})
 
-                # Enqueue for async GSheets push
-                db_manager.enqueue_sync('routing_records', ref_id=record_id)
-                db_manager.trigger_excel_export()
-                return jsonify({'status': 'success', 'message': 'Record updated.'})
-            except _sqlite3.OperationalError as _e:
-                if 'locked' in str(_e) and _attempt < 2:
-                    _time.sleep(1 * (_attempt + 1))
-                    continue
-                return jsonify({'status': 'error', 'message': 'Database is busy, please try again.'})
-            except Exception as e:
-                return jsonify({'status': 'error', 'message': str(e)})
-            finally:
-                if conn:
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
+            vals.append(record_id)
+            conn.execute(f"UPDATE routing_records SET {', '.join(set_parts)} WHERE id = ?", vals)
+            conn.commit()
+        except sqlite3.OperationalError as _e:
+            if 'locked' in str(_e) and _attempt < 2:
+                time.sleep(1 * (_attempt + 1))
+                continue
+            return jsonify({'status': 'error', 'message': 'Database is busy, please try again.'})
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)})
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+        # Post-processing (outside retry, runs once on success)
+        db_manager.enqueue_sync('routing_records', ref_id=record_id)
+        db_manager.trigger_excel_export()
+        return jsonify({'status': 'success', 'message': 'Record updated.'})
 
 
 @app.route('/api/delete_record/<int:record_id>', methods=['DELETE'])
