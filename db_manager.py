@@ -2749,7 +2749,7 @@ def get_pending_changes():
     """Return all pending_profile_changes rows ordered by newest first."""
     conn = get_db_connection()
     rows = conn.execute(
-        "SELECT * FROM pending_profile_changes ORDER BY requested_at DESC"
+        "SELECT * FROM pending_profile_changes WHERE status = 'pending' ORDER BY requested_at DESC"
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
