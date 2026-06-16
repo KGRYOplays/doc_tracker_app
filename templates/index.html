@@ -2664,8 +2664,8 @@
     </div>
 
     <!-- Slip Editor Modal -->
-    <div id="slipEditorModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);z-index:9999;align-items:center;justify-content:center;border-radius:0;">
-        <div id="slipEditorContent" style="background:var(--bg-primary);border-radius:var(--radius-md);max-width:1000px;width:95%;max-height:90vh;overflow-y:auto;padding:24px;position:relative;box-shadow:0 25px 50px rgba(0,0,0,0.5);border:1px solid var(--glass-border);">
+    <div id="slipEditorModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;border-radius:0;">
+        <div id="slipEditorContent" style="background:linear-gradient(135deg,#1e293b 0%,#0f172a 100%);border-radius:var(--radius-md);max-width:1000px;width:95%;max-height:90vh;overflow-y:auto;padding:24px;position:relative;box-shadow:0 25px 50px rgba(0,0,0,0.5);border:1px solid #334155;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid var(--glass-border);">
                 <h2 id="slipModalTitle" style="margin:0;font-size:1.3rem;">📄 DOCUMENT TRACKING SLIP</h2>
                 <button onclick="closeSlipModal()" style="background:transparent;border:none;color:var(--text-muted);font-size:1.5rem;cursor:pointer;padding:4px 8px;line-height:1;">✖</button>
@@ -2702,20 +2702,6 @@
         #slipEditorContent input:disabled, #slipEditorContent select:disabled {
             opacity:0.7;
             cursor:not-allowed;
-        }
-        .slip-record-section {
-            margin-bottom:20px;
-            padding:16px;
-            background:rgba(15,23,42,0.15);
-            border-radius:var(--radius-md);
-            border:1px solid var(--glass-border);
-        }
-        .slip-record-section h4 {
-            margin:0 0 12px 0;
-            font-size:0.95rem;
-            color:var(--primary);
-            padding-bottom:8px;
-            border-bottom:1px solid var(--glass-border);
         }
         .slip-routing-table {
             width:100%;
@@ -4413,7 +4399,11 @@
                 var imgSrc = window.location.origin + '/api/label_image/' + code;
                 var canEdit = (currentUserRole === 'Admin' || currentUserRole === 'Supervisor');
 
-                // Info section
+                var firstRec = records[0] || {};
+                var currentStatus = firstRec.status || 'for signature';
+                var currentRemarks = firstRec.remarks || '';
+
+                // ── INFO SECTION ──
                 var html = '<div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap;">' +
                     '<div style="flex:1;min-width:280px;">' +
                     '<table style="width:100%;font-size:0.85rem;">' +
@@ -4421,60 +4411,64 @@
                     '<tr><td style="font-weight:600;padding:3px 12px 3px 0;white-space:nowrap;color:var(--text-muted);">Department:</td><td>' + (data.department || '-') + '</td></tr>' +
                     '<tr><td style="font-weight:600;padding:3px 12px 3px 0;white-space:nowrap;color:var(--text-muted);">School/Office:</td><td>' + (data.school || '-') + '</td></tr>' +
                     '<tr><td style="font-weight:600;padding:3px 12px 3px 0;white-space:nowrap;color:var(--text-muted);">Employee(s):</td><td>' + (employees || '-') + '</td></tr>' +
-                    '<tr><td style="font-weight:600;padding:3px 12px 3px 0;white-space:nowrap;color:var(--text-muted);">Document Type:</td><td>' + (data.doc_type || '-') + '</td></tr>' +
+                    '<tr><td style="font-weight:600;padding:3px 12px 3px 0;white-space:nowrap;color:var(--text-muted);">Document Type:</td><td>' +
+                    (canEdit
+                        ? '<input type="text" id="slipDocType" value="' + (data.doc_type || '').replace(/"/g, '&quot;') + '" style="width:100%;padding:6px 10px;background:rgba(15,23,42,0.4);border:1px solid #475569;border-radius:6px;color:var(--text-main);font-size:0.85rem;">'
+                        : (data.doc_type || '-')) +
+                    '</td></tr>' +
                     '</table></div>' +
-                    '<div style="text-align:right;"><img src="' + imgSrc + '" alt="' + code + '" style="max-width:120px;height:auto;border:1px solid var(--glass-border);border-radius:6px;"></div>' +
+                    '<div style="text-align:right;"><img src="' + imgSrc + '" alt="' + code + '" style="max-width:120px;height:auto;border:1px solid #475569;border-radius:6px;"></div>' +
                     '</div>';
 
-                // Per-record routing tables
-                records.forEach(function(r) {
-                    var statusVal = r.status || 'for signature';
-                    var statusOptions = ['for signature', 'with corrections', 'released'];
-                    var statusHtml = canEdit
-                        ? '<select data-record-id="' + r.id + '" data-field="status" class="slip-status-select">' +
-                          statusOptions.map(function(s) { return '<option value="' + s + '" ' + (s === statusVal ? 'selected' : '') + '>' + s.toUpperCase() + '</option>'; }).join('') +
-                          '</select>'
-                        : '<span style="font-weight:600;">' + statusVal.toUpperCase() + '</span>';
+                // ── STATUS + REMARKS ──
+                var statusOptions = ['for signature', 'with corrections', 'released'];
+                var statusHtml = canEdit
+                    ? '<select id="slipStatus" style="width:100%;background:rgba(15,23,42,0.4);border:1px solid #475569;border-radius:6px;padding:6px 10px;color:var(--text-main);font-size:0.85rem;cursor:pointer;">' +
+                      statusOptions.map(function(s) { return '<option value="' + s + '" ' + (s === currentStatus ? 'selected' : '') + '>' + s.toUpperCase() + '</option>'; }).join('') +
+                      '</select>'
+                    : '<span style="font-weight:600;">' + currentStatus.toUpperCase() + '</span>';
 
-                    html += '<div class="slip-record-section">' +
-                        '<h4>👤 ' + (r.employee || 'Unknown') + '</h4>' +
-                        '<table class="slip-routing-table">' +
-                        '<thead><tr><th>#</th><th>Receiving Office</th><th>Receiver</th><th>Date/Time</th><th style="text-align:center;width:140px;">Status</th></tr></thead><tbody>';
+                var remarksHtml = canEdit
+                    ? '<textarea id="slipRemarks" style="width:100%;padding:6px 10px;background:rgba(15,23,42,0.4);border:1px solid #475569;border-radius:6px;color:var(--text-main);font-size:0.85rem;resize:vertical;min-height:36px;" placeholder="Add remarks...">' + (currentRemarks || '').replace(/"/g, '&quot;') + '</textarea>'
+                    : '<span>' + (currentRemarks || '-') + '</span>';
 
-                    var hasData = false;
-                    for (var i = 1; i <= 10; i++) {
-                        var office = r['receiving_office_' + i] || '';
-                        var receiver = r['receiver_name_' + i] || '';
-                        var ts = r['timestamp_' + i] || '';
-                        if (!office && !receiver && !ts && i > 1) continue; // skip trailing empty
-                        hasData = true;
+                html += '<div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap;">' +
+                    '<div style="min-width:200px;flex:1;"><label style="font-weight:600;color:var(--text-muted);font-size:0.8rem;display:block;margin-bottom:4px;">STATUS</label>' + statusHtml + '</div>' +
+                    '<div style="flex:2;min-width:280px;"><label style="font-weight:600;color:var(--text-muted);font-size:0.8rem;display:block;margin-bottom:4px;">REMARKS</label>' + remarksHtml + '</div>' +
+                    '</div>';
 
-                        var officeCell = canEdit
-                            ? '<input type="text" value="' + (office).replace(/"/g, '&quot;') + '" data-record-id="' + r.id + '" data-stage="' + i + '" data-field="receiving_office" placeholder="Office...">'
-                            : (office || '-');
-                        var receiverCell = canEdit
-                            ? '<input type="text" value="' + (receiver).replace(/"/g, '&quot;') + '" data-record-id="' + r.id + '" data-stage="' + i + '" data-field="receiver_name" placeholder="Receiver...">'
-                            : (receiver || '-');
-                        var tsCell = canEdit
-                            ? '<input type="text" value="' + (ts).replace(/"/g, '&quot;') + '" data-record-id="' + r.id + '" data-stage="' + i + '" data-field="timestamp" placeholder="Date/Time...">'
-                            : (ts || '-');
-                        var statusCell = (i === 1) ? statusHtml : '';
-                        html += '<tr>' +
-                            '<td>' + i + '</td>' +
-                            '<td>' + officeCell + '</td>' +
-                            '<td>' + receiverCell + '</td>' +
-                            '<td>' + tsCell + '</td>' +
-                            '<td style="text-align:center;">' + statusCell + '</td>' +
-                            '</tr>';
-                    }
-                    if (!hasData) {
-                        html += '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:12px;">No routing data for this record.</td></tr>';
-                    }
-                    html += '</tbody></table></div>';
-                });
+                // ── SINGLE ROUTING TABLE ──
+                html += '<h4 style="margin:0 0 12px 0;font-size:0.9rem;color:var(--primary);">ROUTING HISTORY</h4>' +
+                    '<div style="overflow-x:auto;">' +
+                    '<table class="slip-routing-table"><thead><tr><th>#</th><th>Receiving Office</th><th>Receiver</th><th>Date/Time</th></tr></thead><tbody>';
+
+                for (var i = 1; i <= 10; i++) {
+                    var office = firstRec['receiving_office_' + i] || '';
+                    var receiver = firstRec['receiver_name_' + i] || '';
+                    var ts = firstRec['timestamp_' + i] || '';
+
+                    var officeCell = canEdit
+                        ? '<input type="text" name="receiving_office_' + i + '" value="' + office.replace(/"/g, '&quot;') + '" placeholder="Office..." style="width:100%;">'
+                        : (office || '-');
+                    var receiverCell = canEdit
+                        ? '<input type="text" name="receiver_name_' + i + '" value="' + receiver.replace(/"/g, '&quot;') + '" placeholder="Receiver..." style="width:100%;">'
+                        : (receiver || '-');
+                    var tsCell = canEdit
+                        ? '<input type="text" name="timestamp_' + i + '" value="' + ts.replace(/"/g, '&quot;') + '" placeholder="Date/Time..." style="width:100%;">'
+                        : (ts || '-');
+
+                    html += '<tr>' +
+                        '<td>' + i + '</td>' +
+                        '<td>' + officeCell + '</td>' +
+                        '<td>' + receiverCell + '</td>' +
+                        '<td>' + tsCell + '</td>' +
+                        '</tr>';
+                }
+
+                html += '</tbody></table></div>';
 
                 if (records.length === 0) {
-                    html += '<div style="text-align:center;color:var(--text-muted);padding:24px;">No routing records found for this code.</div>';
+                    html = '<div style="text-align:center;padding:40px;color:var(--text-muted);">No routing records found for this code.</div>';
                 }
 
                 body.innerHTML = html;
@@ -4502,60 +4496,45 @@
         }
 
         function saveSlipChanges() {
-            if (!_slipCurrentCode || _slipRecords.length === 0) { showToast('error', 'No data to save.'); return; }
+            if (!_slipCurrentCode) { showToast('error', 'No data to save.'); return; }
 
-            var updates = {};
-            // Collect status changes
-            document.querySelectorAll('.slip-status-select').forEach(function(sel) {
-                var rid = sel.getAttribute('data-record-id');
-                if (!updates[rid]) updates[rid] = {};
-                updates[rid]['status'] = sel.value;
+            var payload = {};
+
+            var docTypeInput = document.getElementById('slipDocType');
+            if (docTypeInput) payload.doc_type = docTypeInput.value;
+
+            var statusSelect = document.getElementById('slipStatus');
+            if (statusSelect) payload.status = statusSelect.value;
+
+            var remarksInput = document.getElementById('slipRemarks');
+            if (remarksInput) payload.remarks = remarksInput.value;
+
+            document.querySelectorAll('#slipModalBody input[name^="receiving_office_"], #slipModalBody input[name^="receiver_name_"], #slipModalBody input[name^="timestamp_"]').forEach(function(inp) {
+                payload[inp.name] = inp.value;
             });
-
-            // Collect routing field changes
-            document.querySelectorAll('#slipModalBody input[data-record-id]').forEach(function(inp) {
-                var rid = inp.getAttribute('data-record-id');
-                var stage = inp.getAttribute('data-stage');
-                var field = inp.getAttribute('data-field');
-                if (!rid || !stage || !field) return;
-                var colName = field + '_' + stage;
-                if (!updates[rid]) updates[rid] = {};
-                updates[rid][colName] = inp.value;
-            });
-
-            var ids = Object.keys(updates);
-            if (ids.length === 0) { showToast('info', 'No changes to save.'); return; }
 
             var btn = document.querySelector('#slipModalFooter .btn-primary');
             if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving...'; }
 
-            var completed = 0;
-            var hasError = false;
-            ids.forEach(function(rid) {
-                fetch('/api/update_record/' + rid, {
-                    method: 'PUT',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(updates[rid])
-                })
-                .then(function(res) { return res.json(); })
-                .then(function(data) {
-                    completed++;
-                    if (data.status !== 'success') hasError = true;
-                    if (completed === ids.length) {
-                        if (btn) { btn.disabled = false; btn.textContent = '💾 Save Changes'; }
-                        if (hasError) showToast('warning', 'Some changes may not have saved.');
-                        else showToast('success', '✅ ' + ids.length + ' record(s) updated successfully!');
-                        refreshRecords();
-                    }
-                })
-                .catch(function(err) {
-                    completed++;
-                    hasError = true;
-                    if (completed === ids.length) {
-                        if (btn) { btn.disabled = false; btn.textContent = '💾 Save Changes'; }
-                        showToast('error', 'Error saving changes: ' + err.message);
-                    }
-                });
+            fetch('/api/update_records_by_code/' + encodeURIComponent(_slipCurrentCode), {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (btn) { btn.disabled = false; btn.textContent = '💾 Save Changes'; }
+                if (data.status === 'success') {
+                    showToast('success', data.message);
+                    refreshRecords();
+                    closeSlipModal();
+                } else {
+                    showToast('error', data.message || 'Save failed.');
+                }
+            })
+            .catch(function(err) {
+                if (btn) { btn.disabled = false; btn.textContent = '💾 Save Changes'; }
+                showToast('error', 'Error saving changes: ' + err.message);
             });
         }
 

@@ -2275,6 +2275,51 @@ def update_record(record_id):
         return jsonify({'status': 'success', 'message': 'Record updated.'})
 
 
+@app.route('/api/update_records_by_code/<path:code>', methods=['PUT'])
+@require_login
+@require_role('Admin', 'Supervisor')
+def update_records_by_code(code):
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
+    try:
+        data = request.json
+        conn = db_manager.get_db_connection()
+
+        if 'doc_type' in data and data['doc_type']:
+            conn.execute("UPDATE code_lookup SET doc_type = ? WHERE code = ?", (data['doc_type'], code))
+
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(routing_records)")
+        db_cols = {row[1] for row in cursor.fetchall()}
+
+        set_parts, vals = [], []
+        for field, value in data.items():
+            if field == 'doc_type':
+                continue
+            if field in db_cols and field != 'id':
+                set_parts.append(f"{field} = ?")
+                vals.append(value)
+
+        if set_parts:
+            vals.append(code)
+            conn.execute(f"UPDATE routing_records SET {', '.join(set_parts)} WHERE code = ?", vals)
+
+        conn.commit()
+
+        affected = conn.execute("SELECT id FROM routing_records WHERE code = ?", (code,)).fetchall()
+        affected_ids = [r['id'] for r in affected]
+        conn.close()
+
+        if affected_ids:
+            db_manager.enqueue_sync_batch('routing_records', affected_ids)
+        db_manager.trigger_excel_export()
+
+        return jsonify({'status': 'success', 'message': f'Updated {len(affected_ids)} record(s).'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 @app.route('/api/delete_record/<int:record_id>', methods=['DELETE'])
 @require_admin
 def delete_record(record_id):
