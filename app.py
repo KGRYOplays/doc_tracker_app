@@ -2221,6 +2221,32 @@ def get_records_by_code(code):
         return jsonify({'status': 'error', 'message': str(e)})
 
 
+@app.route('/api/get_known_routing_values', methods=['GET'])
+@require_login
+def get_known_routing_values():
+    """Distinct receiving offices and receiver names from routing history (for autosuggest)."""
+    try:
+        conn = db_manager.get_db_connection()
+        offices = set()
+        receivers = set()
+        for i in range(1, 11):
+            for col, store in [('receiving_office', offices), ('receiver_name', receivers)]:
+                rows = conn.execute(
+                    f"SELECT DISTINCT {col}_{i} AS v FROM routing_records "
+                    f"WHERE {col}_{i} IS NOT NULL AND trim({col}_{i}) != ''"
+                ).fetchall()
+                for r in rows:
+                    store.add(r['v'])
+        conn.close()
+        return jsonify({
+            'status': 'success',
+            'offices': sorted(offices),
+            'receivers': sorted(receivers)
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 # ─────────────────────────────────────────────
 #  EDIT / DELETE RECORDS (Admin / Supervisor)
 # ─────────────────────────────────────────────

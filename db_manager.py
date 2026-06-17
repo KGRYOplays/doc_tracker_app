@@ -823,56 +823,65 @@ def migrate_routing_employee_names():
 
 # --- REAL-TIME EXCEL EXPORT ---
 def trigger_excel_export():
-    """Trigger a thread-safe export of SQLite data to local Excel files."""
+    """Export SQLite data to local Excel files via openpyxl (no pandas in hot path)."""
     def _export():
         try:
+            from openpyxl import Workbook
             conn = sqlite3.connect(DB_FILE)
-            
-            # Export code lookup
-            df_lookup = pd.read_sql_query(
-                "SELECT code AS Code, department AS Department, school_office AS [School/Office], "
-                "employees AS Employees, doc_type AS [Doc Type], generated_at AS Generated FROM code_lookup "
-                "ORDER BY generated_at DESC",
-                conn
+            conn.row_factory = sqlite3.Row
+
+            # ── Code Lookup ──
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Code Lookup"
+            ws.append(["Code", "Department", "School/Office", "Employees", "Doc Type", "Generated"])
+            cur = conn.execute(
+                "SELECT code, department, school_office, employees, doc_type, generated_at "
+                "FROM code_lookup ORDER BY generated_at DESC"
             )
-            df_lookup.to_excel(CODE_LOOKUP_EXCEL, index=False)
-            
-            # Export routing records — dynamically determine stages
-            cursor = conn.cursor()
-            cursor.execute("PRAGMA table_info(routing_records)")
-            cols = [row[1] for row in cursor.fetchall()]
-            
-            stages = []
-            for c in cols:
-                if c.startswith("receiving_office_"):
-                    try:
-                        stages.append(int(c.split("_")[-1]))
-                    except:
-                        pass
-            stages = sorted(list(set(stages)))
-            if not stages:
-                stages = list(range(1, 11))
-            
-            sql = (f"SELECT department AS Department, school_office AS [School/Office], "
-                   f"employee AS Employee, code AS Code, "
-                   f"COALESCE(doc_type, '') AS [Doc Type], "
-                   f"remarks AS Remarks")
+            for row in cur:
+                ws.append([row['code'], row['department'], row['school_office'],
+                           row['employees'], row['doc_type'], row['generated_at']])
+            wb.save(CODE_LOOKUP_EXCEL)
+
+            # ── Routing Records ──
+            cur.execute("PRAGMA table_info(routing_records)")
+            cols = [r[1] for r in cur.fetchall()]
+            stages = sorted(set(
+                int(c.split("_")[-1]) for c in cols
+                if c.startswith("receiving_office_")
+            )) or list(range(1, 11))
+
+            header = ["Department", "School/Office", "Employee", "Code", "Doc Type", "Remarks"]
             for i in stages:
-                sql += f", receiving_office_{i} AS [Receiving Office {i}]"
-                # Only add receiver_name if column exists
+                header.append(f"Receiving Office {i}")
                 if f"receiver_name_{i}" in cols:
-                    sql += f", receiver_name_{i} AS [Receiver Name {i}]"
-                sql += f", timestamp_{i} AS [Timestamp {i}]"
-            sql += " FROM routing_records ORDER BY id DESC"
-            
-            df_routing = pd.read_sql_query(sql, conn)
-            df_routing.to_excel(ROUTING_RECORD_EXCEL, index=False)
-            
+                    header.append(f"Receiver Name {i}")
+                header.append(f"Timestamp {i}")
+
+            wb2 = Workbook()
+            ws2 = wb2.active
+            ws2.title = "Routing Records"
+            ws2.append(header)
+
+            cur.execute("SELECT * FROM routing_records ORDER BY id DESC")
+            for row in cur:
+                vals = [row['department'], row['school_office'], row['employee'],
+                        row['code'], row.get('doc_type', '') or '',
+                        row.get('remarks', '') or '']
+                for i in stages:
+                    vals.append(row.get(f'receiving_office_{i}', '') or '')
+                    if f"receiver_name_{i}" in cols:
+                        vals.append(row.get(f'receiver_name_{i}', '') or '')
+                    vals.append(row.get(f'timestamp_{i}', '') or '')
+                ws2.append(vals)
+
+            wb2.save(ROUTING_RECORD_EXCEL)
             conn.close()
-            print("Excel databases successfully updated.")
+            print("Excel databases successfully updated (openpyxl).")
         except Exception as e:
-            print(f"Error exporting to Excel: {e}")
-    
+            print(f"Error exporting to Excel (openpyxl): {e}")
+
     threading.Thread(target=_export, daemon=True).start()
 
 
