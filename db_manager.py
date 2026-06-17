@@ -1236,16 +1236,9 @@ def batch_push_routing_rows(sheet_id, service_account_json, rows):
         key  = (code, emp)
 
         if key in existing:
-            # Only update scan columns (Receiving Office N → Timestamp N)
-            # to preserve manual edits to non-scan fields made directly in GSheets.
-            scan_data = []
-            for i in range(1, 11):
-                scan_data.append(r.get(f'receiving_office_{i}') or "")
-                scan_data.append(r.get(f'receiver_name_{i}') or "")
-                scan_data.append(r.get(f'timestamp_{i}') or "")
             update_batch.append({
-                'range': f'I{existing[key]}:{end_col}{existing[key]}',
-                'values': [scan_data]
+                'range': f'A{existing[key]}:{end_col}{existing[key]}',
+                'values': [row_data]
             })
         else:
             append_batch.append(row_data)

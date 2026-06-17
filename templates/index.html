@@ -4450,11 +4450,11 @@
             Promise.all([
                 fetch('/api/get_code_lookup/' + encodeURIComponent(code)).then(function(r) { return r.json(); }),
                 fetch('/api/get_records_by_code/' + encodeURIComponent(code)).then(function(r) { return r.json(); }),
-                fetch('/api/get_known_routing_values').then(function(r) { return r.json(); })
+                fetch('/api/get_all_schools').then(function(r) { return r.json(); })
             ]).then(function(results) {
                 var lookupRes = results[0];
                 var recordsRes = results[1];
-                var knownRes = results[2];
+                var schoolsRes = results[2];
                 if (lookupRes.status !== 'success') { showToast('error', 'Code not found.'); closeSlipModal(); return; }
 
                 var data = lookupRes.data;
@@ -4464,10 +4464,8 @@
                 var imgSrc = window.location.origin + '/api/label_image/' + code;
                 var canEdit = (currentUserRole === 'Admin' || currentUserRole === 'Supervisor');
 
-                var knownOffices = (knownRes && knownRes.status === 'success' ? knownRes.offices || [] : []);
-                var knownReceivers = (knownRes && knownRes.status === 'success' ? knownRes.receivers || [] : []);
-                var officeOptions = knownOffices.map(function(o) { return '<option value="' + o.replace(/"/g, '&quot;') + '">'; }).join('');
-                var receiverOptions = knownReceivers.map(function(r) { return '<option value="' + r.replace(/"/g, '&quot;') + '">'; }).join('');
+                var allSchools = (schoolsRes && schoolsRes.status === 'success' ? schoolsRes.schools || [] : []);
+                var schoolOptions = allSchools.map(function(s) { return '<option value="' + s.replace(/"/g, '&quot;') + '">'; }).join('');
 
                 var firstRec = records[0] || {};
                 var currentStatus = firstRec.status || 'for signature';
@@ -4518,7 +4516,7 @@
                     var ts = firstRec['timestamp_' + i] || '';
 
                     var officeCell = canEdit
-                        ? '<input type="text" name="receiving_office_' + i + '" value="' + office.replace(/"/g, '&quot;') + '" list="slipOfficeList" placeholder="Office..." style="width:100%;">'
+                        ? '<input type="text" name="receiving_office_' + i + '" value="' + office.replace(/"/g, '&quot;') + '" list="slipOfficeList" placeholder="Office..." onchange="slipLoadReceivers(this)" style="width:100%;">'
                         : (office || '-');
                     var receiverCell = canEdit
                         ? '<input type="text" name="receiver_name_' + i + '" value="' + receiver.replace(/"/g, '&quot;') + '" list="slipReceiverList" placeholder="Receiver..." style="width:100%;">'
@@ -4536,8 +4534,8 @@
                 }
 
                 html += '</tbody></table></div>' +
-                    '<datalist id="slipOfficeList">' + officeOptions + '</datalist>' +
-                    '<datalist id="slipReceiverList">' + receiverOptions + '</datalist>';
+                    '<datalist id="slipOfficeList">' + schoolOptions + '</datalist>' +
+                    '<datalist id="slipReceiverList"></datalist>';
 
                 if (records.length === 0) {
                     html = '<div style="text-align:center;padding:40px;color:var(--text-muted);">No routing records found for this code.</div>';
@@ -4565,6 +4563,28 @@
             var code = _slipCurrentCode;
             closeSlipModal();
             if (code) printRoutingSlip(code);
+        }
+
+        function slipLoadReceivers(officeInput) {
+            var school = officeInput.value.trim();
+            var dl = document.getElementById('slipReceiverList');
+            dl.innerHTML = '';
+            if (!school) return;
+            fetch('/api/get_all_school_employees', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({school: school})
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.status === 'success') {
+                    data.employees.forEach(function(name) {
+                        var opt = document.createElement('option');
+                        opt.value = name;
+                        dl.appendChild(opt);
+                    });
+                }
+            });
         }
 
         function saveSlipChanges() {

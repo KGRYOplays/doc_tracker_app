@@ -2331,6 +2331,18 @@ def update_records_by_code(code):
             vals.append(code)
             conn.execute(f"UPDATE routing_records SET {', '.join(set_parts)} WHERE code = ?", vals)
 
+        # Auto-set status to 'released' if any receiving_office is RECORDS SERVICES
+        for i in range(1, 11):
+            office_key = f'receiving_office_{i}'
+            if data.get(office_key, '').strip().upper() == 'RECORDS SERVICES':
+                conn.execute(
+                    "UPDATE routing_records SET status = 'released' "
+                    "WHERE code = ? AND "
+                    "LOWER(status) != 'with corrections'",
+                    (code,)
+                )
+                break
+
         conn.commit()
 
         affected = conn.execute("SELECT id FROM routing_records WHERE code = ?", (code,)).fetchall()
