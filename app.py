@@ -2396,6 +2396,51 @@ def delete_code(code):
         return jsonify({'status': 'error', 'message': str(e)})
 
 
+@app.route('/api/batch_delete', methods=['POST'])
+@require_admin
+def batch_delete():
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
+    try:
+        data = request.get_json(force=True) or {}
+        codes = data.get('codes', [])
+        record_ids = data.get('record_ids', [])
+
+        if not codes and not record_ids:
+            return jsonify({'status': 'error', 'message': 'No items to delete.'}), 400
+
+        conn = db_manager.get_db_connection()
+        total = 0
+
+        for rid in record_ids:
+            conn.execute("DELETE FROM routing_records WHERE id = ?", (rid,))
+            db_manager.enqueue_sync('routing_records', ref_id=rid, operation='delete')
+            total += 1
+
+        for code in codes:
+            affected = conn.execute(
+                "SELECT id FROM routing_records WHERE code = ?", (code,)
+            ).fetchall()
+            for r in affected:
+                db_manager.enqueue_sync('routing_records', ref_id=r['id'], operation='delete')
+            conn.execute("DELETE FROM routing_records WHERE code = ?", (code,))
+            conn.execute("DELETE FROM code_lookup WHERE code = ?", (code,))
+            db_manager.enqueue_sync('code_lookup', ref_id=code, operation='delete')
+            total += 1 + len(affected)
+
+        conn.commit()
+        conn.close()
+        db_manager.trigger_excel_export()
+
+        return jsonify({
+            'status': 'success',
+            'message': f'Deleted {total} item(s).'
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
 # ─────────────────────────────────────────────
 #  SETTINGS (Admin only)
 # ─────────────────────────────────────────────

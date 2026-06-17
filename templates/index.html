@@ -1864,34 +1864,49 @@
         body.light-mode .picker-container input:focus { border-color:var(--primary); background:#fff; }
         body.light-mode #barcodeInput { background:rgba(0,0,0,0.03); color:#000; border-color:rgba(0,0,0,0.12); }
         body.light-mode #barcodeInput:focus { border-color:var(--primary); }
-        .ctx-menu {
-            position: fixed;
-            z-index: 9999;
-            background: var(--surface);
-            border: 1px solid var(--glass-border);
-            border-radius: 8px;
-            padding: 6px 0;
-            min-width: 220px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-            display: none;
-        }
-        .ctx-item {
-            padding: 8px 16px;
-            cursor: pointer;
-            font-size: 0.85rem;
+        .delete-mode-bar {
             display: flex;
             align-items: center;
-            gap: 8px;
-            color: var(--text-main);
+            gap: 12px;
+            padding: 8px 16px;
+            background: rgba(248,113,113,0.08);
+            border: 1px solid rgba(248,113,113,0.25);
+            border-radius: var(--radius-md);
+            margin-top: 8px;
+            flex-wrap: wrap;
         }
-        .ctx-item:hover {
-            background: rgba(248,113,113,0.1);
-            color: #f87171;
+        .delete-mode-bar .btn-danger {
+            background: #dc2626;
+            color: #fff;
+            border: none;
         }
-        .ctx-divider {
-            height: 1px;
-            background: var(--glass-border);
-            margin: 4px 8px;
+        .delete-mode-bar .btn-danger:hover {
+            background: #b91c1c;
+        }
+        .delete-mode-bar .btn-danger:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .delete-mode-bar .delete-info {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            flex: 1;
+        }
+        .delete-checkbox {
+            width: 18px; height: 18px;
+            cursor: pointer;
+            accent-color: #dc2626;
+        }
+        tr.selected-for-delete {
+            background: rgba(248,113,113,0.08) !important;
+            outline: 1px solid rgba(248,113,113,0.3);
+        }
+        th.checkbox-col, td.checkbox-col {
+            width: 40px; min-width: 40px;
+            display: none;
+        }
+        .show-delete th.checkbox-col, .show-delete td.checkbox-col {
+            display: table-cell;
         }
     </style>
 </head>
@@ -2263,13 +2278,20 @@
                     </div>
                     <button class="btn btn-secondary" onclick="changePage(-1)" style="height: 48px;">◀ Previous</button>
                     <span id="pageIndicator" style="display:flex; align-items:center; padding:0 15px; font-weight:bold; font-size:0.85rem;">Page 1</span>
+                    <button class="btn btn-secondary" onclick="toggleDeleteMode()" id="deleteModeBtn" style="height:48px;font-size:1.1rem;" title="Toggle delete selection mode">🗑️</button>
                     <button class="btn btn-secondary" onclick="changePage(1)" style="height: 48px;">Next ▶</button>
                     <button class="btn btn-secondary" id="refreshRecordsBtn" onclick="refreshRecords()" style="height: 48px;">🔄 Refresh</button>
+                </div>
+                <div class="delete-mode-bar" id="deleteModeBar" style="display:none;">
+                    <span class="delete-info" id="deleteInfo">No items selected</span>
+                    <button class="btn btn-danger" id="confirmDeleteBtn" onclick="confirmDeleteSelected()" disabled>🗑️ Delete Selected</button>
+                    <button class="btn btn-secondary" onclick="toggleDeleteMode()">Cancel</button>
                 </div>
                 <div id="recordsTableContainer" class="table-container">
                     <table id="recordsTable">
                         <thead>
                             <tr id="recordsTableHeaders">
+                                <th class="checkbox-col"><input type="checkbox" class="delete-checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)"></th>
                                 <th class="sortable" data-sort="school_office" onclick="sortRouting('school_office')">School/Office <span class="sort-arrow" id="arrow-school_office"></span></th>
                                 <th class="sortable" data-sort="employee" onclick="sortRouting('employee')">Employee <span class="sort-arrow" id="arrow-employee"></span></th>
                                 <th class="sortable" data-sort="code" onclick="sortRouting('code')">Barcode Code <span class="sort-arrow" id="arrow-code"></span></th>
@@ -2284,7 +2306,7 @@
                         </thead>
                         <tbody id="recordsTableBody">
                             <tr>
-                                <td colspan="10" class="empty-list" style="text-align:center;">Loading tracking data...</td>
+                                <td colspan="11" class="empty-list" style="text-align:center;">Loading tracking data...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -2708,10 +2730,6 @@
                 <!-- Populated by JS -->
             </div>
         </div>
-    </div>
-
-    <div class="ctx-menu" id="ctxMenu">
-        <div class="ctx-item" id="ctxDeleteRecord">🗑️ Delete</div>
     </div>
 
     <style>
@@ -4037,8 +4055,13 @@
         }
 
         function loadRoutingRecords(page) {
+            if (_deleteMode) {
+                _selectedCodes.clear();
+                _selectedRecordIds.clear();
+                updateDeleteInfo();
+            }
             const tbody = document.getElementById('recordsTableBody');
-            tbody.innerHTML = '<tr><td colspan="10" class="empty-list" style="text-align:center;"><span style="display:inline-block;width:20px;height:20px;border:2px solid var(--glass-border);border-top-color:var(--primary);border-radius:50%;animation:spin 0.8s linear infinite;margin-right:8px;vertical-align:middle;"></span> Loading tracking data...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="11" class="empty-list" style="text-align:center;"><span style="display:inline-block;width:20px;height:20px;border:2px solid var(--glass-border);border-top-color:var(--primary);border-radius:50%;animation:spin 0.8s linear infinite;margin-right:8px;vertical-align:middle;"></span> Loading tracking data...</td></tr>';
             const query = document.getElementById('tableSearch') ? document.getElementById('tableSearch').value.trim() : '';
             const searchParam = query ? '&search=' + encodeURIComponent(query) : '';
             const sortParam = '&sort_by=' + sortState.column + '&order=' + sortState.order;
@@ -4070,13 +4093,13 @@
                     document.getElementById('pageIndicator').innerText = 'Page ' + _currentGroupPage + ' of ' + totalPages + ' (' + totalGroups + ' codes)';
                     renderRoutingTable();
                 } else {
-                    tbody.innerHTML = '<tr><td colspan="10" class="empty-list" style="text-align:center;">Failed to load records.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="11" class="empty-list" style="text-align:center;">Failed to load records.</td></tr>';
                     showToast('error', 'Failed to retrieve records: ' + (data.message || 'Unknown error'));
                 }
             })
             .catch(function(err) {
                 console.error('Error loading routing records:', err);
-                tbody.innerHTML = '<tr><td colspan="10" class="empty-list" style="text-align:center;">Error loading records. <a href="#" onclick="loadRoutingRecords();return false;" style="color:var(--primary);text-decoration:underline;">Click to retry</a></td></tr>';
+                tbody.innerHTML = '<tr><td colspan="11" class="empty-list" style="text-align:center;">Error loading records. <a href="#" onclick="loadRoutingRecords();return false;" style="color:var(--primary);text-decoration:underline;">Click to retry</a></td></tr>';
                 showToast('error', 'Error loading records: ' + (err.message || 'Connection error'));
             });
         }
@@ -4094,7 +4117,7 @@
         function renderRoutingTable() {
             const tbody = document.getElementById('recordsTableBody');
             if (_allGroups.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="10" class="empty-list" style="text-align:center;">No tracking data logged yet.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="11" class="empty-list" style="text-align:center;">No tracking data logged yet.</td></tr>';
                 return;
             }
 
@@ -4109,7 +4132,10 @@
                 var isExpanded = _expandedCodes[g.code] || false;
                 var chevron = '<span class="group-chevron" id="chevron-' + groupId + '">' + (isExpanded ? '▼' : '▶') + '</span>';
 
-                rows.push('<tr class="group-summary" data-code="' + g.code.replace(/'/g, "\\'") + '" onclick="toggleCodeGroup(\'' + g.code.replace(/'/g, "\\'") + '\')" style="cursor:pointer;">' +
+                var codeAttr = g.code.replace(/'/g, "\\'");
+                var isChecked = _selectedCodes.has(g.code);
+                rows.push('<tr class="group-summary' + (isChecked ? ' selected-for-delete' : '') + '" data-code="' + codeAttr + '" onclick="toggleCodeGroup(\'' + codeAttr + '\')" style="cursor:pointer;">' +
+                    '<td class="checkbox-col"><input type="checkbox" class="delete-checkbox" data-code="' + g.code.replace(/"/g, '&quot;') + '" ' + (isChecked ? 'checked' : '') + ' onclick="event.stopPropagation();toggleCodeCheckbox(this)"></td>' +
                     '<td>' + g.school_office + '</td>' +
                     '<td style="font-weight:700;">' + chevron + ' ' + displayEmp + '</td>' +
                     '<td><span class="table-code">' + g.code + '</span></td>' +
@@ -4140,7 +4166,9 @@
                         var statusOptions = ['for signature', 'with corrections', 'released'];
                         var statusDropdown = statusOptions.map(function(s) { return '<option value="' + s + '" ' + (s === statusVal ? 'selected' : '') + '>' + s.toUpperCase() + '</option>'; }).join('');
 
-                        rows.push('<tr class="group-child code-group-' + groupId + '">' +
+                        var isRecChecked = _selectedRecordIds.has(r.id);
+                        rows.push('<tr class="group-child code-group-' + groupId + (isRecChecked ? ' selected-for-delete' : '') + '">' +
+                            '<td class="checkbox-col"><input type="checkbox" class="delete-checkbox" data-record-id="' + r.id + '" ' + (isRecChecked ? 'checked' : '') + ' onclick="event.stopPropagation();toggleRecordCheckbox(this)"></td>' +
                             '<td>' + (r.school_office || "") + '</td>' +
                             '<td style="font-weight:700;">' + (r.employee || "") + '</td>' +
                             '<td><span class="table-code">' + (r.code || "") + '</span></td>' +
@@ -4186,14 +4214,14 @@
                     group.records = _recordsCache[code];
                     renderChildren(group, groupId, summaryRow);
                 } else {
-                    summaryRow.insertAdjacentHTML('afterend', '<tr class="group-child code-group-' + groupId + '"><td colspan="10" style="text-align:center;padding:8px;color:var(--text-muted);font-size:0.75rem;">Loading...</td></tr>');
+                    summaryRow.insertAdjacentHTML('afterend', '<tr class="group-child code-group-' + groupId + '"><td colspan="11" style="text-align:center;padding:8px;color:var(--text-muted);font-size:0.75rem;">Loading...</td></tr>');
                     fetch('/api/get_records_by_code/' + encodeURIComponent(code))
                     .then(function(res) { return res.json(); })
                     .then(function(data) {
                         if (data.status === 'success') {
                             _recordsCache[code] = data.records;
                             group.records = data.records;
-                            var loadingEl = document.querySelector('.code-group-' + groupId + ' td[colspan="10"]');
+                            var loadingEl = document.querySelector('.code-group-' + groupId + ' td[colspan="11"]');
                             if (loadingEl) loadingEl.parentElement.remove();
                             renderChildren(group, groupId, summaryRow);
                         } else {
@@ -4231,7 +4259,9 @@
                 var statusOptions = ['for signature', 'with corrections', 'released'];
                 var statusDropdown = statusOptions.map(function(s) { return '<option value="' + s + '" ' + (s === statusVal ? 'selected' : '') + '>' + s.toUpperCase() + '</option>'; }).join('');
 
-                rows.push('<tr class="group-child code-group-' + groupId + '">' +
+                var isRecChecked = _selectedRecordIds.has(r.id);
+                rows.push('<tr class="group-child code-group-' + groupId + (isRecChecked ? ' selected-for-delete' : '') + '">' +
+                    '<td class="checkbox-col"><input type="checkbox" class="delete-checkbox" data-record-id="' + r.id + '" ' + (isRecChecked ? 'checked' : '') + ' onclick="event.stopPropagation();toggleRecordCheckbox(this)"></td>' +
                     '<td>' + (r.school_office || "") + '</td>' +
                     '<td style="font-weight:700;">' + (r.employee || "") + '</td>' +
                     '<td><span class="table-code">' + (r.code || "") + '</span></td>' +
@@ -5976,65 +6006,138 @@
             }
         };
 
-        // ── RIGHT-CLICK CONTEXT MENU ──
-        var _ctxCode = '';
-        var _ctxSource = '';
+        // ── DELETE SELECTION MODE ──
+        var _deleteMode = false;
+        var _selectedCodes = new Set();
+        var _selectedRecordIds = new Set();
 
-        document.addEventListener('contextmenu', function(e) {
-            var row = e.target.closest('.group-summary, #codesTableBody tr');
-            if (!row) return;
-            if (currentUserRole !== 'Admin' && currentUserRole !== 'Supervisor') return;
-
-            e.preventDefault();
-            var codeEl = row.querySelector('.table-code');
-            _ctxCode = row.getAttribute('data-code') || (codeEl ? codeEl.textContent.trim() : '');
-            if (!_ctxCode) return;
-
-            _ctxSource = row.classList.contains('group-summary') ? 'records' : 'codes';
-            if (_ctxSource === 'records') {
-                document.getElementById('ctxDeleteRecord').textContent = '🗑️ Delete all records for ' + _ctxCode;
-            } else {
-                document.getElementById('ctxDeleteRecord').textContent = '🗑️ Delete code ' + _ctxCode + ' and all records';
+        function toggleDeleteMode() {
+            _deleteMode = !_deleteMode;
+            if (!_deleteMode) {
+                _selectedCodes.clear();
+                _selectedRecordIds.clear();
             }
+            var btn = document.getElementById('deleteModeBtn');
+            var bar = document.getElementById('deleteModeBar');
+            var table = document.getElementById('recordsTable');
+            var selectAll = document.getElementById('selectAllCheckbox');
 
-            var menu = document.getElementById('ctxMenu');
-            menu.style.left = e.clientX + 'px';
-            menu.style.top = e.clientY + 'px';
-            menu.style.display = 'block';
-        });
+            if (_deleteMode) {
+                btn.style.background = 'rgba(248,113,113,0.2)';
+                btn.style.borderColor = '#dc2626';
+                bar.style.display = 'flex';
+                table.classList.add('show-delete');
+                if (selectAll) selectAll.checked = false;
+            } else {
+                btn.style.background = '';
+                btn.style.borderColor = '';
+                bar.style.display = 'none';
+                table.classList.remove('show-delete');
+            }
+            updateDeleteInfo();
+            renderRoutingTable();
+        }
 
-        document.addEventListener('click', function() {
-            document.getElementById('ctxMenu').style.display = 'none';
-        });
+        function toggleCodeCheckbox(cb) {
+            var code = cb.getAttribute('data-code');
+            if (!code) return;
+            if (cb.checked) {
+                _selectedCodes.add(code);
+            } else {
+                _selectedCodes.delete(code);
+            }
+            var tr = cb.closest('tr');
+            if (tr) tr.classList.toggle('selected-for-delete', cb.checked);
+            updateDeleteInfo();
+        }
 
-        document.getElementById('ctxDeleteRecord').addEventListener('click', function() {
-            document.getElementById('ctxMenu').style.display = 'none';
-            if (!_ctxCode) return;
+        function toggleRecordCheckbox(cb) {
+            var id = parseInt(cb.getAttribute('data-record-id'));
+            if (!id) return;
+            if (cb.checked) {
+                _selectedRecordIds.add(id);
+            } else {
+                _selectedRecordIds.delete(id);
+            }
+            var tr = cb.closest('tr');
+            if (tr) tr.classList.toggle('selected-for-delete', cb.checked);
+            updateDeleteInfo();
+        }
 
-            var msg = _ctxSource === 'records'
-                ? 'Delete ALL routing records for code ' + _ctxCode + '?'
-                : 'Delete code ' + _ctxCode + ' and ALL its routing records? This cannot be undone.';
+        function toggleSelectAll(cb) {
+            var checkboxes = document.querySelectorAll('#recordsTable .group-summary .delete-checkbox');
+            checkboxes.forEach(function(c) {
+                c.checked = cb.checked;
+                var code = c.getAttribute('data-code');
+                if (cb.checked) {
+                    if (code) _selectedCodes.add(code);
+                } else {
+                    if (code) _selectedCodes.delete(code);
+                }
+                var tr = c.closest('tr');
+                if (tr) tr.classList.toggle('selected-for-delete', cb.checked);
+            });
+            updateDeleteInfo();
+        }
+
+        function updateDeleteInfo() {
+            var info = document.getElementById('deleteInfo');
+            var btn = document.getElementById('confirmDeleteBtn');
+            var total = _selectedCodes.size + _selectedRecordIds.size;
+            var parts = [];
+            if (_selectedCodes.size > 0) parts.push(_selectedCodes.size + ' code(s)');
+            if (_selectedRecordIds.size > 0) parts.push(_selectedRecordIds.size + ' record(s)');
+            info.textContent = total > 0 ? 'Selected: ' + parts.join(', ') : 'No items selected';
+            btn.disabled = total === 0;
+        }
+
+        function confirmDeleteSelected() {
+            var total = _selectedCodes.size + _selectedRecordIds.size;
+            if (total === 0) return;
+
+            var msg = 'Delete ' + total + ' item(s)?';
+            if (_selectedCodes.size > 0) {
+                msg += '\n\nCodes to delete:\n' + Array.from(_selectedCodes).slice(0, 10).join('\n');
+                if (_selectedCodes.size > 10) msg += '\n... and ' + (_selectedCodes.size - 10) + ' more';
+                msg += '\n(All routing records for these codes will be deleted.)';
+            }
+            if (_selectedRecordIds.size > 0) {
+                msg += '\n\nIndividual record IDs to delete: ' + Array.from(_selectedRecordIds).join(', ');
+            }
+            msg += '\n\nThis cannot be undone.';
 
             if (!confirm(msg)) return;
 
-            fetch('/api/delete_code/' + encodeURIComponent(_ctxCode), {
-                method: 'DELETE',
-                headers: {'Content-Type': 'application/json'}
+            var btn = document.getElementById('confirmDeleteBtn');
+            btn.disabled = true;
+            btn.textContent = 'Deleting...';
+
+            fetch('/api/batch_delete', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    codes: Array.from(_selectedCodes),
+                    record_ids: Array.from(_selectedRecordIds)
+                })
             })
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 if (data.status === 'success') {
                     showToast('success', data.message);
-                    if (_ctxSource === 'records') loadRoutingRecords(currentPage);
-                    else loadAllCodes(1);
+                    toggleDeleteMode();
+                    loadRoutingRecords(currentPage);
                 } else {
                     showToast('error', data.message || 'Delete failed.');
+                    btn.disabled = false;
+                    btn.textContent = '🗑️ Delete Selected';
                 }
             })
             .catch(function(err) {
                 showToast('error', 'Error: ' + err.message);
+                btn.disabled = false;
+                btn.textContent = '🗑️ Delete Selected';
             });
-        });
+        }
     </script>
 </body>
 </html>
