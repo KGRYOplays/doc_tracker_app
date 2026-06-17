@@ -1864,6 +1864,35 @@
         body.light-mode .picker-container input:focus { border-color:var(--primary); background:#fff; }
         body.light-mode #barcodeInput { background:rgba(0,0,0,0.03); color:#000; border-color:rgba(0,0,0,0.12); }
         body.light-mode #barcodeInput:focus { border-color:var(--primary); }
+        .ctx-menu {
+            position: fixed;
+            z-index: 9999;
+            background: var(--surface);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            padding: 6px 0;
+            min-width: 220px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            display: none;
+        }
+        .ctx-item {
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-main);
+        }
+        .ctx-item:hover {
+            background: rgba(248,113,113,0.1);
+            color: #f87171;
+        }
+        .ctx-divider {
+            height: 1px;
+            background: var(--glass-border);
+            margin: 4px 8px;
+        }
     </style>
 </head>
 <body>
@@ -2679,6 +2708,10 @@
                 <!-- Populated by JS -->
             </div>
         </div>
+    </div>
+
+    <div class="ctx-menu" id="ctxMenu">
+        <div class="ctx-item" id="ctxDeleteRecord">🗑️ Delete</div>
     </div>
 
     <style>
@@ -5482,6 +5515,7 @@
                 var empList = c.employees_list || [];
                 var empDisplay = empList.length > 3 ? empList.slice(0, 3).join(', ') + ' +' + (empList.length - 3) + ' more' : empList.join(', ');
                 var tr = document.createElement('tr');
+                tr.setAttribute('data-code', c.code);
                 tr.innerHTML = '<td><span class="table-code">' + (c.code || '') + '</span></td><td>' + (c.department || '') + '</td><td>' + (c.school_office || '') + '</td><td style="font-size:0.7rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + empDisplay + '</td><td>' + (c.doc_type || '') + '</td><td class="table-time">' + (c.generated_at || '') + '</td><td><button onclick="printRoutingSlip(\'' + c.code + '\')" style="border:none;background:transparent;color:var(--primary);cursor:pointer;font-size:0.75rem;font-weight:600;padding:4px 8px;">📄 Slip</button></td>';
                 tbody.appendChild(tr);
             });
@@ -5941,6 +5975,66 @@
                 syncReferenceData();
             }
         };
+
+        // ── RIGHT-CLICK CONTEXT MENU ──
+        var _ctxCode = '';
+        var _ctxSource = '';
+
+        document.addEventListener('contextmenu', function(e) {
+            var row = e.target.closest('.group-summary, #codesTableBody tr');
+            if (!row) return;
+            if (currentUserRole !== 'Admin' && currentUserRole !== 'Supervisor') return;
+
+            e.preventDefault();
+            var codeEl = row.querySelector('.table-code');
+            _ctxCode = row.getAttribute('data-code') || (codeEl ? codeEl.textContent.trim() : '');
+            if (!_ctxCode) return;
+
+            _ctxSource = row.classList.contains('group-summary') ? 'records' : 'codes';
+            if (_ctxSource === 'records') {
+                document.getElementById('ctxDeleteRecord').textContent = '🗑️ Delete all records for ' + _ctxCode;
+            } else {
+                document.getElementById('ctxDeleteRecord').textContent = '🗑️ Delete code ' + _ctxCode + ' and all records';
+            }
+
+            var menu = document.getElementById('ctxMenu');
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+            menu.style.display = 'block';
+        });
+
+        document.addEventListener('click', function() {
+            document.getElementById('ctxMenu').style.display = 'none';
+        });
+
+        document.getElementById('ctxDeleteRecord').addEventListener('click', function() {
+            document.getElementById('ctxMenu').style.display = 'none';
+            if (!_ctxCode) return;
+
+            var msg = _ctxSource === 'records'
+                ? 'Delete ALL routing records for code ' + _ctxCode + '?'
+                : 'Delete code ' + _ctxCode + ' and ALL its routing records? This cannot be undone.';
+
+            if (!confirm(msg)) return;
+
+            fetch('/api/delete_code/' + encodeURIComponent(_ctxCode), {
+                method: 'DELETE',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.status === 'success') {
+                    showToast('success', data.message);
+                    if (_ctxSource === 'records') loadRoutingRecords(currentPage);
+                    else loadAllCodes(1);
+                } else {
+                    showToast('error', data.message || 'Delete failed.');
+                }
+            })
+            .catch(function(err) {
+                showToast('error', 'Error: ' + err.message);
+            });
+        });
     </script>
 </body>
 </html>

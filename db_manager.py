@@ -1516,7 +1516,7 @@ def start_periodic_gsheets_pull():
     Uses a short-sleep loop so the timer can be reset externally (e.g. after
     maintenance mode ends) without waiting for the full interval to elapse.
     """
-    DEFAULT_INTERVAL = 15
+    DEFAULT_INTERVAL = 1
 
     def _worker():
         global _periodic_last_run

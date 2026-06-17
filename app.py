@@ -2365,6 +2365,37 @@ def delete_record(record_id):
         return jsonify({'status': 'error', 'message': str(e)})
 
 
+@app.route('/api/delete_code/<path:code>', methods=['DELETE'])
+@require_admin
+def delete_code(code):
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
+    try:
+        conn = db_manager.get_db_connection()
+        affected = conn.execute(
+            "SELECT id FROM routing_records WHERE code = ?", (code,)
+        ).fetchall()
+        affected_ids = [r['id'] for r in affected]
+
+        conn.execute("DELETE FROM routing_records WHERE code = ?", (code,))
+        conn.execute("DELETE FROM code_lookup WHERE code = ?", (code,))
+        conn.commit()
+        conn.close()
+
+        for rid in affected_ids:
+            db_manager.enqueue_sync('routing_records', ref_id=rid, operation='delete')
+        db_manager.enqueue_sync('code_lookup', ref_id=code, operation='delete')
+        db_manager.trigger_excel_export()
+
+        return jsonify({
+            'status': 'success',
+            'message': f'Deleted code {code} and {len(affected_ids)} routing record(s).'
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
 # ─────────────────────────────────────────────
 #  SETTINGS (Admin only)
 # ─────────────────────────────────────────────
