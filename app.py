@@ -790,13 +790,10 @@ def register():
         import secrets
         password = secrets.token_urlsafe(8)
         pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-        supervised_schools = ''
-        if role_request == 'Supervisor':
-            supervised_schools = data.get('supervised_schools', '').strip()
         conn.execute(
-            "INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change, supervised_schools, employee_name) "
-            "VALUES (?, ?, ?, 'Pending', ?, ?, 1, ?, ?)",
-            (username, pw_hash, role_request, school_office, email, supervised_schools, employee_name)
+            "INSERT INTO users (username, password_hash, role, status, school_office, email, requires_password_change, employee_name) "
+            "VALUES (?, ?, ?, 'Pending', ?, ?, 1, ?)",
+            (username, pw_hash, role_request, school_office, email, employee_name)
         )
         conn.commit()
         conn.close()
@@ -854,24 +851,14 @@ def update_profile():
     try:
         data = request.json
         school_office = data.get('school_office', '').strip()
-        supervised_schools = data.get('supervised_schools', '').strip()
         username = session['username']
         
         conn = db_manager.get_db_connection()
-        user_role = conn.execute("SELECT role FROM users WHERE username = ?", (username,)).fetchone()['role']
-        if user_role == 'Supervisor':
-            conn.execute(
-                "UPDATE users SET school_office = ?, supervised_schools = ? WHERE username = ?",
-                (school_office, supervised_schools, username)
-            )
-        else:
-            conn.execute("UPDATE users SET school_office = ? WHERE username = ?", (school_office, username))
+        conn.execute("UPDATE users SET school_office = ? WHERE username = ?", (school_office, username))
         conn.commit()
         conn.close()
         
         session['school_office'] = school_office
-        if user_role == 'Supervisor':
-            session['supervised_schools'] = supervised_schools
         
         return jsonify({'status': 'success', 'message': 'Profile updated!'})
     except Exception as e:
@@ -922,10 +909,9 @@ def admin_approve_user(username):
             conn.close()
             return jsonify({'status': 'error', 'message': 'User not found.'}), 404
             
-        supervised_schools = data.get('supervised_schools', '').strip()
         conn.execute(
-            "UPDATE users SET status = 'Approved', role = ?, supervised_schools = ? WHERE username = ?",
-            (assigned_role, supervised_schools, username)
+            "UPDATE users SET status = 'Approved', role = ? WHERE username = ?",
+            (assigned_role, username)
         )
         conn.commit()
         conn.close()
@@ -1017,7 +1003,7 @@ def request_profile_change():
                 pending_fields['_current_username'] = username
 
         # ── Other fields → pending ──
-        for field in ['employee_name', 'email', 'supervised_schools']:
+        for field in ['employee_name', 'email']:
             if field in changes:
                 val = changes[field]
                 if val is not None and (not isinstance(val, str) or val.strip()):
@@ -1173,30 +1159,6 @@ def change_email():
         session['email'] = new_email
 
         return jsonify({'status': 'success', 'message': 'Email changed successfully!'})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-
-@app.route('/api/update_supervised_schools', methods=['POST'])
-@require_login
-def update_supervised_schools():
-    try:
-        user_role = session.get('user_role', '')
-        if user_role != 'Supervisor':
-            return jsonify({'status': 'error', 'message': 'Only supervisors can manage supervised schools.'}), 403
-
-        data = request.json
-        schools = data.get('schools', '').strip()
-        username = session['username']
-
-        conn = db_manager.get_db_connection()
-        conn.execute("UPDATE users SET supervised_schools = ? WHERE username = ?", (schools, username))
-        conn.commit()
-        conn.close()
-
-        session['supervised_schools'] = schools
-
-        return jsonify({'status': 'success', 'message': 'Supervised schools updated successfully!'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -1449,7 +1411,6 @@ def generate_code():
         # ── ROLE-BASED SCHOOL RESTRICTIONS ──
         user_role     = session.get('user_role', '')
         user_school   = session.get('school_office', '')
-        supervised    = session.get('supervised_schools', '').strip()
 
         if user_role == 'User' and user_school:
             # Force to assigned school
@@ -1462,11 +1423,6 @@ def generate_code():
             if row:
                 department = row['department']
             school = user_school
-
-        elif user_role == 'Supervisor' and supervised:
-            schools = [s.strip() for s in supervised.split(',') if s.strip()]
-            if school and school not in schools:
-                return jsonify({'status': 'error', 'message': 'You can only generate codes for your supervised schools.'}), 403
 
         # ── CUSTOM NAMES ARE MONITORING-ONLY: ensure they are NOT inserted into master_data ──
         # save_code_lookup() stores names in code_lookup.employees; it does NOT touch master_data.
@@ -1526,7 +1482,6 @@ def generate_batch():
         code_dicts = []
         user_role = session.get('user_role', '')
         user_school = session.get('school_office', '')
-        supervised = session.get('supervised_schools', '').strip()
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
 
         for idx, gen in enumerate(generations):
@@ -1546,10 +1501,6 @@ def generate_batch():
                 if row:
                     department = row['department']
                 school = user_school
-            elif user_role == 'Supervisor' and supervised:
-                schools = [s.strip() for s in supervised.split(',') if s.strip()]
-                if school and school not in schools:
-                    return jsonify({'status': 'error', 'message': f'Generation {idx+1}: you can only generate codes for your supervised schools.'}), 403
 
             employees = [db_manager.reorder_name(e) for e in employees]
             employees_str = '|||'.join(employees)
@@ -1718,13 +1669,8 @@ def log_scan():
     # ── ROLE-BASED SCHOOL RESTRICTIONS ──
     user_role     = session.get('user_role', '')
     user_school   = session.get('school_office', '')
-    supervised    = session.get('supervised_schools', '').strip()
     if user_role == 'User' and user_school:
         receiving_office = user_school
-    elif user_role == 'Supervisor' and supervised:
-        allowed = [s.strip().lower() for s in supervised.split(',') if s.strip()]
-        if receiving_office.strip().lower() not in allowed:
-            return jsonify({'status': 'error', 'message': 'You can only scan at your supervised schools/offices.'}), 403
 
     if not receiving_office:
         return jsonify({'status': 'error', 'message': 'Please select a Receiving Office!'})
@@ -1904,21 +1850,10 @@ def get_routing_records():
         # ── ROLE-BASED FILTERING ──
         user_role   = session.get('user_role', '')
         user_school = session.get('school_office', '')
-        supervised = session.get('supervised_schools', '').strip()
 
         if user_role == 'User' and user_school:
             where_sql = "WHERE school_office = ?"
             params.append(user_school)
-            if search:
-                where_sql += " AND (employee LIKE ? OR code LIKE ? OR department LIKE ? OR school_office LIKE ?)"
-                pat = f"%{search}%"
-                params += [pat, pat, pat, pat]
-
-        elif user_role == 'Supervisor' and supervised:
-            schools_list = [s.strip() for s in supervised.split(',') if s.strip()]
-            placeholders = ','.join(['?'] * len(schools_list))
-            where_sql = f"WHERE school_office IN ({placeholders})"
-            params.extend(schools_list)
             if search:
                 where_sql += " AND (employee LIKE ? OR code LIKE ? OR department LIKE ? OR school_office LIKE ?)"
                 pat = f"%{search}%"
@@ -2030,21 +1965,10 @@ def get_routing_grouped():
 
         user_role   = session.get('user_role', '')
         user_school = session.get('school_office', '')
-        supervised  = session.get('supervised_schools', '').strip()
 
         if user_role == 'User' and user_school:
             where_sql = "WHERE r.school_office = ?"
             params.append(user_school)
-            if search:
-                where_sql += " AND (r.employee LIKE ? OR r.code LIKE ? OR r.department LIKE ? OR r.school_office LIKE ?)"
-                pat = f"%{search}%"
-                params += [pat, pat, pat, pat]
-
-        elif user_role == 'Supervisor' and supervised:
-            schools_list = [s.strip() for s in supervised.split(',') if s.strip()]
-            placeholders = ','.join(['?'] * len(schools_list))
-            where_sql = f"WHERE r.school_office IN ({placeholders})"
-            params.extend(schools_list)
             if search:
                 where_sql += " AND (r.employee LIKE ? OR r.code LIKE ? OR r.department LIKE ? OR r.school_office LIKE ?)"
                 pat = f"%{search}%"
@@ -2247,6 +2171,264 @@ def get_known_routing_values():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
+@app.route('/api/schools_codes', methods=['GET'])
+@require_login
+def api_schools_codes():
+    try:
+        conn = db_manager.get_db_connection()
+        rows = conn.execute("SELECT id, name, department, sta_code FROM schools ORDER BY name").fetchall()
+        conn.close()
+        return jsonify({'status': 'success', 'schools': [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/employees_codes', methods=['GET'])
+@require_login
+def api_employees_codes():
+    try:
+        conn = db_manager.get_db_connection()
+        rows = conn.execute("""
+            SELECT e.id, e.name, e.school_id, s.name AS school_name, e.employee_no, e.notes
+            FROM employees e
+            JOIN schools s ON s.id = e.school_id
+            ORDER BY e.name
+        """).fetchall()
+        conn.close()
+        return jsonify({'status': 'success', 'employees': [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+# ─────────────────────────────────────────────
+#  REFERENCE DATA CRUD (Admin only)
+# ─────────────────────────────────────────────
+@app.route('/api/add_school', methods=['POST'])
+@require_login
+@require_role('Admin')
+def api_add_school():
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
+    for _attempt in range(3):
+        conn = None
+        try:
+            data = request.json
+            name = (data.get('name') or '').strip()
+            department = (data.get('department') or '').strip()
+            sta_code = (data.get('sta_code') or '').strip() or None
+            if not name:
+                return jsonify({'status': 'error', 'message': 'School name is required.'})
+            conn = db_manager.get_db_connection()
+            existing = conn.execute("SELECT id FROM schools WHERE name = ?", (name,)).fetchone()
+            if existing:
+                return jsonify({'status': 'error', 'message': 'A school with this name already exists.'})
+            conn.execute("INSERT INTO schools (name, department, sta_code) VALUES (?, ?, ?)",
+                         (name, department, sta_code))
+            conn.commit()
+            new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.close()
+            return jsonify({'status': 'success', 'message': f'School "{name}" added.', 'id': new_id})
+        except sqlite3.OperationalError as _e:
+            if 'locked' in str(_e) and _attempt < 2:
+                time.sleep(1 * (_attempt + 1))
+                continue
+            return jsonify({'status': 'error', 'message': 'Database is busy, please try again.'})
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/edit_school', methods=['POST'])
+@require_login
+@require_role('Admin')
+def api_edit_school():
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
+    for _attempt in range(3):
+        conn = None
+        try:
+            data = request.json
+            school_id = data.get('id')
+            if not school_id:
+                return jsonify({'status': 'error', 'message': 'School ID is required.'})
+            name = (data.get('name') or '').strip()
+            department = (data.get('department') or '').strip()
+            sta_code = (data.get('sta_code') or '').strip() or None
+            if not name:
+                return jsonify({'status': 'error', 'message': 'School name is required.'})
+            conn = db_manager.get_db_connection()
+            duplicate = conn.execute("SELECT id FROM schools WHERE name = ? AND id != ?", (name, school_id)).fetchone()
+            if duplicate:
+                return jsonify({'status': 'error', 'message': 'Another school with this name already exists.'})
+            conn.execute("UPDATE schools SET name = ?, department = ?, sta_code = ? WHERE id = ?",
+                         (name, department, sta_code, school_id))
+            conn.commit()
+            conn.close()
+            return jsonify({'status': 'success', 'message': 'School updated.'})
+        except sqlite3.OperationalError as _e:
+            if 'locked' in str(_e) and _attempt < 2:
+                time.sleep(1 * (_attempt + 1))
+                continue
+            return jsonify({'status': 'error', 'message': 'Database is busy, please try again.'})
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/delete_school', methods=['POST'])
+@require_login
+@require_role('Admin')
+def api_delete_school():
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
+    for _attempt in range(3):
+        conn = None
+        try:
+            data = request.json
+            school_id = data.get('id')
+            if not school_id:
+                return jsonify({'status': 'error', 'message': 'School ID is required.'})
+            conn = db_manager.get_db_connection()
+            emp_count = conn.execute("SELECT COUNT(*) FROM employees WHERE school_id = ?", (school_id,)).fetchone()[0]
+            if emp_count > 0:
+                return jsonify({'status': 'error', 'message': f'Cannot delete: {emp_count} employee(s) still assigned to this school. Reassign them first.'})
+            conn.execute("DELETE FROM schools WHERE id = ?", (school_id,))
+            conn.commit()
+            conn.close()
+            return jsonify({'status': 'success', 'message': 'School deleted.'})
+        except sqlite3.OperationalError as _e:
+            if 'locked' in str(_e) and _attempt < 2:
+                time.sleep(1 * (_attempt + 1))
+                continue
+            return jsonify({'status': 'error', 'message': 'Database is busy, please try again.'})
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/add_employee', methods=['POST'])
+@require_login
+@require_role('Admin')
+def api_add_employee():
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
+    for _attempt in range(3):
+        conn = None
+        try:
+            data = request.json
+            name = (data.get('name') or '').strip()
+            school_id = data.get('school_id')
+            employee_no = (data.get('employee_no') or '').strip() or None
+            notes = (data.get('notes') or '').strip() or None
+            if not name:
+                return jsonify({'status': 'error', 'message': 'Employee name is required.'})
+            if not school_id:
+                return jsonify({'status': 'error', 'message': 'School is required.'})
+            conn = db_manager.get_db_connection()
+            school = conn.execute("SELECT id FROM schools WHERE id = ?", (school_id,)).fetchone()
+            if not school:
+                return jsonify({'status': 'error', 'message': 'Selected school does not exist.'})
+            existing = conn.execute("SELECT id FROM employees WHERE name = ? AND school_id = ?", (name, school_id)).fetchone()
+            if existing:
+                return jsonify({'status': 'error', 'message': 'This employee already exists at this school.'})
+            conn.execute("INSERT INTO employees (name, school_id, employee_no, notes) VALUES (?, ?, ?, ?)",
+                         (name, school_id, employee_no, notes))
+            conn.commit()
+            new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.close()
+            return jsonify({'status': 'success', 'message': f'Employee "{name}" added.', 'id': new_id})
+        except sqlite3.OperationalError as _e:
+            if 'locked' in str(_e) and _attempt < 2:
+                time.sleep(1 * (_attempt + 1))
+                continue
+            return jsonify({'status': 'error', 'message': 'Database is busy, please try again.'})
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/edit_employee', methods=['POST'])
+@require_login
+@require_role('Admin')
+def api_edit_employee():
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
+    for _attempt in range(3):
+        conn = None
+        try:
+            data = request.json
+            emp_id = data.get('id')
+            if not emp_id:
+                return jsonify({'status': 'error', 'message': 'Employee ID is required.'})
+            name = (data.get('name') or '').strip()
+            school_id = data.get('school_id')
+            employee_no = (data.get('employee_no') or '').strip() or None
+            notes = (data.get('notes') or '').strip() or None
+            if not name:
+                return jsonify({'status': 'error', 'message': 'Employee name is required.'})
+            if not school_id:
+                return jsonify({'status': 'error', 'message': 'School is required.'})
+            conn = db_manager.get_db_connection()
+            school = conn.execute("SELECT id FROM schools WHERE id = ?", (school_id,)).fetchone()
+            if not school:
+                return jsonify({'status': 'error', 'message': 'Selected school does not exist.'})
+            duplicate = conn.execute("SELECT id FROM employees WHERE name = ? AND school_id = ? AND id != ?",
+                                     (name, school_id, emp_id)).fetchone()
+            if duplicate:
+                return jsonify({'status': 'error', 'message': 'Another employee with this name already exists at this school.'})
+            conn.execute("UPDATE employees SET name = ?, school_id = ?, employee_no = ?, notes = ? WHERE id = ?",
+                         (name, school_id, employee_no, notes, emp_id))
+            conn.commit()
+            conn.close()
+            return jsonify({'status': 'success', 'message': 'Employee updated.'})
+        except sqlite3.OperationalError as _e:
+            if 'locked' in str(_e) and _attempt < 2:
+                time.sleep(1 * (_attempt + 1))
+                continue
+            return jsonify({'status': 'error', 'message': 'Database is busy, please try again.'})
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/delete_employee', methods=['POST'])
+@require_login
+@require_role('Admin')
+def api_delete_employee():
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
+    for _attempt in range(3):
+        conn = None
+        try:
+            data = request.json
+            emp_id = data.get('id')
+            confirmed = data.get('confirm', False)
+            if not emp_id:
+                return jsonify({'status': 'error', 'message': 'Employee ID is required.'})
+            conn = db_manager.get_db_connection()
+            emp = conn.execute("SELECT name FROM employees WHERE id = ?", (emp_id,)).fetchone()
+            if not emp:
+                return jsonify({'status': 'error', 'message': 'Employee not found.'})
+            emp_name = emp['name']
+            code_count = conn.execute("SELECT COUNT(*) FROM code_employees WHERE employee_id = ?", (emp_id,)).fetchone()[0]
+            if code_count > 0 and not confirmed:
+                return jsonify({'status': 'warning', 'message': f'This employee is linked to {code_count} document code(s). Delete anyway?', 'code_count': code_count, 'confirm_required': True})
+            if confirmed:
+                conn.execute("DELETE FROM code_employees WHERE employee_id = ?", (emp_id,))
+            conn.execute("DELETE FROM employees WHERE id = ?", (emp_id,))
+            conn.commit()
+            conn.close()
+            return jsonify({'status': 'success', 'message': f'Employee "{emp_name}" deleted.'})
+        except sqlite3.OperationalError as _e:
+            if 'locked' in str(_e) and _attempt < 2:
+                time.sleep(1 * (_attempt + 1))
+                continue
+            return jsonify({'status': 'error', 'message': 'Database is busy, please try again.'})
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 # ─────────────────────────────────────────────
 #  EDIT / DELETE RECORDS (Admin / Supervisor)
 # ─────────────────────────────────────────────
@@ -2366,15 +2548,35 @@ def delete_record(record_id):
         return jsonify({'status': 'error', 'message': msg}), 403
     try:
         conn = db_manager.get_db_connection()
+        row = conn.execute("SELECT code, employee FROM routing_records WHERE id = ?", (record_id,)).fetchone()
+        code = row['code'] if row else None
+        employee = row['employee'] if row else None
         conn.execute("DELETE FROM routing_records WHERE id = ?", (record_id,))
         conn.commit()
         conn.close()
-        # Enqueue deletion marker for async GSheets push
-        db_manager.enqueue_sync('routing_records', ref_id=record_id, operation='delete')
+
+        # Synchronously delete from GSheets so periodic pull doesn't re-import
+        _sync_delete_from_gsheets(code, employee)
+
         db_manager.trigger_excel_export()
         return jsonify({'status': 'success', 'message': 'Record deleted.'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+
+def _sync_delete_from_gsheets(code, employee=None):
+    """Helper to synchronously delete a code from GSheets via the db_manager.
+    Prevents re-import by periodic pull."""
+    if not code:
+        return
+    sheet_id = db_manager.get_setting('gsheets_id')
+    creds = db_manager.get_decrypted_setting('gsheets_credentials')
+    if not sheet_id or not creds:
+        return
+    try:
+        db_manager.synchronous_delete_from_gsheets(sheet_id, creds, code)
+    except Exception as e:
+        print(f"synchronous delete from GSheets failed for {code}: {e}")
 
 
 @app.route('/api/delete_code/<path:code>', methods=['DELETE'])
@@ -2386,18 +2588,19 @@ def delete_code(code):
     try:
         conn = db_manager.get_db_connection()
         affected = conn.execute(
-            "SELECT id FROM routing_records WHERE code = ?", (code,)
+            "SELECT id, code, employee FROM routing_records WHERE code = ?", (code,)
         ).fetchall()
         affected_ids = [r['id'] for r in affected]
 
         conn.execute("DELETE FROM routing_records WHERE code = ?", (code,))
         conn.execute("DELETE FROM code_lookup WHERE code = ?", (code,))
+        conn.execute("DELETE FROM code_employees WHERE code = ?", (code,))
         conn.commit()
         conn.close()
 
-        for rid in affected_ids:
-            db_manager.enqueue_sync('routing_records', ref_id=rid, operation='delete')
-        db_manager.enqueue_sync('code_lookup', ref_id=code, operation='delete')
+        # Synchronously delete from GSheets
+        _sync_delete_from_gsheets(code)
+
         db_manager.trigger_excel_export()
 
         return jsonify({
@@ -2426,19 +2629,21 @@ def batch_delete():
         total = 0
 
         for rid in record_ids:
+            row = conn.execute("SELECT code, employee FROM routing_records WHERE id = ?", (rid,)).fetchone()
+            rcode = row['code'] if row else None
+            remp = row['employee'] if row else None
             conn.execute("DELETE FROM routing_records WHERE id = ?", (rid,))
-            db_manager.enqueue_sync('routing_records', ref_id=rid, operation='delete')
+            _sync_delete_from_gsheets(rcode, remp)
             total += 1
 
         for code in codes:
             affected = conn.execute(
-                "SELECT id FROM routing_records WHERE code = ?", (code,)
+                "SELECT id, code, employee FROM routing_records WHERE code = ?", (code,)
             ).fetchall()
-            for r in affected:
-                db_manager.enqueue_sync('routing_records', ref_id=r['id'], operation='delete')
             conn.execute("DELETE FROM routing_records WHERE code = ?", (code,))
             conn.execute("DELETE FROM code_lookup WHERE code = ?", (code,))
-            db_manager.enqueue_sync('code_lookup', ref_id=code, operation='delete')
+            conn.execute("DELETE FROM code_employees WHERE code = ?", (code,))
+            _sync_delete_from_gsheets(code)
             total += 1 + len(affected)
 
         conn.commit()
@@ -2451,6 +2656,100 @@ def batch_delete():
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+
+# ─────────────────────────────────────────────
+#  FORCE SYNC
+# ─────────────────────────────────────────────
+@app.route('/api/force_sync', methods=['POST'])
+@require_admin
+def force_sync():
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
+    try:
+        data = request.get_json(force=True) or {}
+        direction = data.get('direction', 'pull').strip().lower()
+        if direction not in ('pull', 'push'):
+            return jsonify({'status': 'error', 'message': 'direction must be "pull" or "push"'}), 400
+        if direction == 'pull':
+            count, errors = db_manager.force_pull_from_gsheets()
+        else:
+            count, errors = db_manager.force_push_to_gsheets()
+            errors = errors if isinstance(errors, list) else []
+        return jsonify({
+            'status': 'success' if not errors else 'partial',
+            'message': f"Force {direction} complete. Synced {count} records." if not errors else f"Force {direction} completed with {len(errors)} error(s).",
+            'count': count,
+            'errors': errors
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+# ─────────────────────────────────────────────
+#  REVIVE CODE
+# ─────────────────────────────────────────────
+@app.route('/api/revive_code', methods=['POST'])
+@require_admin
+def revive_code():
+    blocked, msg = _check_maintenance()
+    if blocked:
+        return jsonify({'status': 'error', 'message': msg}), 403
+    try:
+        data = request.get_json(force=True) or {}
+        code = (data.get('code') or '').strip()
+        doc_type = (data.get('doc_type') or '').strip()
+        school = (data.get('school') or '').strip()
+        employee_names = data.get('employees', [])
+        if not isinstance(employee_names, list):
+            employee_names = [employee_names]
+        if not code or not doc_type:
+            return jsonify({'status': 'error', 'message': 'code and doc_type are required.'}), 400
+        conn = db_manager.get_db_connection()
+        conn.execute("DELETE FROM routing_records WHERE code = ?", (code,))
+        conn.execute("DELETE FROM code_employees WHERE code = ?", (code,))
+        existing = conn.execute("SELECT code FROM code_lookup WHERE code = ?", (code,)).fetchone()
+        today = datetime.now().strftime('%Y-%m-%d')
+        if existing:
+            conn.execute("UPDATE code_lookup SET doc_type = ?, date_generated = ? WHERE code = ?", (doc_type, today, code))
+        else:
+            conn.execute("INSERT INTO code_lookup (code, doc_type, date_generated) VALUES (?, ?, ?)", (code, doc_type, today))
+        for emp_name in employee_names:
+            emp_name = emp_name.strip()
+            if not emp_name:
+                continue
+            emp = conn.execute("SELECT id FROM employees WHERE name = ?", (emp_name,)).fetchone()
+            if emp:
+                employee_id = emp['id']
+            else:
+                school_id = None
+                if school:
+                    school_row = conn.execute("SELECT id FROM schools WHERE name = ?", (school,)).fetchone()
+                    if school_row:
+                        school_id = school_row['id']
+                conn.execute("INSERT INTO employees (name, school_id) VALUES (?, ?)", (emp_name, school_id))
+                employee_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute("INSERT OR IGNORE INTO code_employees (code, employee_id, employee_name) VALUES (?, ?, ?)", (code, employee_id, emp_name))
+        conn.commit()
+        conn.close()
+        sheet_id = db_manager.get_setting('gsheets_id')
+        creds = db_manager.get_decrypted_setting('gsheets_credentials')
+        if sheet_id and creds:
+            try:
+                db_manager.synchronous_delete_from_gsheets(sheet_id, creds, code)
+            except Exception as e:
+                print(f"revive_code: GSheets delete error: {e}")
+            db_manager.enqueue_sync('code_lookup', ref_id=code, code=code, operation='upsert')
+            for emp_name in employee_names:
+                db_manager.enqueue_sync('code_employees', ref_id=code, code=code, employee=emp_name, operation='upsert')
+        db_manager.trigger_excel_export()
+        return jsonify({
+            'status': 'success',
+            'message': f'Code {code} revived with {len(employee_names)} employee(s).'
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 # ─────────────────────────────────────────────
@@ -2475,6 +2774,7 @@ def get_settings():
             'gsheets_from_env':     creds_from_env and id_from_env,  # True = survives Render wipes
             'scanner_pin':          db_manager.get_setting('scanner_pin', 'scanner123') if is_admin else '',
             'admin_pin':            db_manager.get_setting('admin_pin', 'admin123') if is_admin else '',
+            'gsheets_pull_enabled': db_manager.get_setting('gsheets_pull_enabled', 'True') == 'True',
             'gsheets_pull_interval': db_manager.get_setting('gsheets_pull_interval', '5'),
             'logo_url': db_manager.get_setting('logo_url', ''),
             'header_line_1': db_manager.get_setting('header_line_1', 'Republic of the Philippines'),
@@ -2653,12 +2953,17 @@ def save_settings():
         if data.get('admin_pin', '').strip():
             db_manager.save_setting('admin_pin', data['admin_pin'].strip())
 
+        if 'gsheets_pull_enabled' in data:
+            db_manager.save_setting('gsheets_pull_enabled',
+                                    'True' if data['gsheets_pull_enabled'] else 'False')
+
         if data.get('gsheets_pull_interval', '').strip():
             val = data['gsheets_pull_interval'].strip()
             try:
                 parsed = int(val)
                 if parsed >= 1:
                     db_manager.save_setting('gsheets_pull_interval', str(parsed))
+                    db_manager.reset_periodic_pull_timer()
             except ValueError:
                 pass
 
@@ -2690,6 +2995,40 @@ def reload_excel():
         return jsonify({'status': 'success', 'message': f'Loaded {count} new records from Excel!'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+@app.route('/api/rebuild_code_employees', methods=['POST'])
+@require_admin
+def rebuild_code_employees():
+    """Rebuild code_employees links from code_lookup against current employees/schools."""
+    try:
+        ce_count, rr_count, unmatched = db_manager.rebuild_code_employees()
+        msg = f'Rebuilt {ce_count} code-employee links, relinked {rr_count} routing records.'
+        if unmatched:
+            msg += f' {unmatched} unmatched names skipped (already logged).'
+        return jsonify({'status': 'success', 'message': msg, 'code_employees': ce_count, 'routing_records': rr_count, 'unmatched': unmatched})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/api/replace_employees_schools', methods=['POST'])
+@require_admin
+def replace_employees_schools():
+    """Replace schools + employees tables from GSheets worksheets,
+    auto-insert missing employees from code_lookup, rebuild links."""
+    try:
+        result = db_manager.replace_schools_employees_from_gsheets()
+        msg = (
+            f"Schools: {result['schools_inserted']} inserted. "
+            f"Employees: {result['employees_inserted']} from GSheets + {result['missing_inserted']} auto-inserted. "
+            f"Code-employee links: {result['code_employees']} rebuilt. "
+            f"Routing records: {result['routing_records']} relinked."
+        )
+        if result['unmatched']:
+            msg += f" {result['unmatched']} names still unmatched."
+        return jsonify({'status': 'success', 'message': msg, **result})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
 
 @app.route('/api/gsheet_status', methods=['GET'])
 @require_login
@@ -2799,28 +3138,36 @@ def maintenance_toggle():
     """Toggle maintenance mode on/off. When ON, only admins can scan/generate,
     and the periodic pull + background sync worker are paused so the admin
     can safely edit data in Google Sheets without surprise syncs.
-    
+
+    Accepts optional {"gsheets_enabled": false} to disable sync atomically
+    (avoids the two-fetch race that caused 'database is locked').
+
     When turning OFF, the request may include {"pull_gsheets": true} to first
     pull GSheets → SQLite (importing any edits made directly in GSheets)."""
     try:
         data = request.get_json(silent=True) or {}
         current = db_manager.get_setting('maintenance_mode', 'False')
         new_val = 'False' if current == 'True' else 'True'
-        
+
+        # Atomically disable sync when turning maintenance ON
+        if new_val == 'True' and 'gsheets_enabled' in data:
+            db_manager.save_setting('gsheets_enabled',
+                                    'True' if data['gsheets_enabled'] else 'False')
+
         if new_val == 'False' and data.get('pull_gsheets'):
             result, errors = db_manager.pull_all_from_gsheets()
             if errors:
                 return jsonify({'status': 'error', 'message': f'GSheets import failed: {errors[0]}'}), 500
             db_manager.update_last_pull_info("ok", "GSheets imported before exiting maintenance mode.")
-        
+
         if new_val == 'False':
             db_manager.reset_periodic_pull_timer()
-        
+
         db_manager.save_setting('maintenance_mode', new_val)
-        
+
         if new_val == 'True':
             db_manager.update_last_pull_info("paused", "Maintenance mode activated — periodic pull paused.")
-        
+
         return jsonify({
             'status': 'success',
             'maintenance_mode': new_val == 'True',

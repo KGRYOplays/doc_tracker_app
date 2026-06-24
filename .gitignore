@@ -28,8 +28,8 @@ Thumbs.db
 # Generated files - DON'T commit generated QR codes
 static/qr_generated/
 
-# Allow master_db.xlsx and app.db to be committed so Render has data
-# Remove these if you want to exclude them
+# app.db is now excluded — Render will create fresh DB on deploy, GSheets is source of truth
+app.db
 # *.db
 # *.xlsx
 
