@@ -414,10 +414,39 @@ def init_db():
         except Exception as e:
             print(f"Note: Could not seed from master_db.xlsx sheets: {e}")
     
-    # 4. Migrate: add receiver_name columns to existing databases
+    # 4. Seed schools/employees from reference_seed.json if schools table is empty
+    cursor.execute("SELECT COUNT(*) FROM schools")
+    if cursor.fetchone()[0] == 0:
+        seed_path = os.path.join('static', 'reference_seed.json')
+        if os.path.exists(seed_path):
+            try:
+                with open(seed_path, 'r', encoding='utf-8') as f:
+                    seed_data = json.load(f)
+                seeded_schools = 0
+                for school in seed_data.get('schools', []):
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO schools (id, name, department, sta_code) VALUES (?, ?, ?, ?)",
+                        (school['id'], school['name'], school.get('department', ''), school.get('sta_code', ''))
+                    )
+                    if cursor.rowcount > 0:
+                        seeded_schools += 1
+                seeded_emps = 0
+                for emp in seed_data.get('employees', []):
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO employees (id, name, school_id, employee_no, notes) VALUES (?, ?, ?, ?, ?)",
+                        (emp['id'], emp['name'], emp['school_id'], emp.get('employee_no', ''), emp.get('notes', ''))
+                    )
+                    if cursor.rowcount > 0:
+                        seeded_emps += 1
+                conn.commit()
+                print(f"Seeded {seeded_schools} schools and {seeded_emps} employees from reference_seed.json.")
+            except Exception as e:
+                print(f"Note: could not seed from reference_seed.json: {e}")
+    
+    # 5. Migrate: add receiver_name columns to existing databases
     _migrate_add_receiver_names(conn)
     
-    # 5. Migrate: add status column to existing routing_records tables
+    # 6. Migrate: add status column to existing routing_records tables
     try:
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(routing_records)")
@@ -429,7 +458,7 @@ def init_db():
     except Exception as e:
         print(f"Migration note: could not add status column: {e}")
     
-    # 6. Create persisted sync_queue table (replaces in-memory gs_sync_queue)
+    # 7. Create persisted sync_queue table (replaces in-memory gs_sync_queue)
     try:
         cursor = conn.cursor()
         cursor.execute("""
