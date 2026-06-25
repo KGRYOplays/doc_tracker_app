@@ -1416,7 +1416,7 @@ def generate_code():
             # Force to assigned school
             conn = db_manager.get_db_connection()
             row = conn.execute(
-                "SELECT department FROM master_data WHERE school_office = ? LIMIT 1",
+                "SELECT department FROM schools WHERE name = ? LIMIT 1",
                 (user_school,)
             ).fetchone()
             conn.close()
@@ -3256,8 +3256,9 @@ def dashboard_stats():
         conn = db_manager.get_db_connection()
 
         # Build common JOIN / WHERE fragments
-        doc_join = " LEFT JOIN code_lookup cl_ ON rr.code = cl_.code"
+        doc_join = " INNER JOIN code_lookup cl_ ON rr.code = cl_.code"
         doc_where = ""
+        status_filter = " AND LOWER(rr.status) != 'deleted'"
         params = []
         if doc_type_filter:
             doc_where = " AND cl_.doc_type = ?"
@@ -3279,23 +3280,23 @@ def dashboard_stats():
             unique_barcodes = conn.execute("SELECT COUNT(*) FROM code_lookup").fetchone()[0]
 
         # Total employees
-        total_q = f"SELECT COUNT(*) FROM routing_records rr{doc_join} WHERE 1=1{doc_where}"
+        total_q = f"SELECT COUNT(*) FROM routing_records rr{doc_join} WHERE 1=1{status_filter}{doc_where}"
         total_employees = conn.execute(total_q, params).fetchone()[0]
 
         # Active codes
-        active_q = f"SELECT COUNT(DISTINCT rr.code) FROM routing_records rr{doc_join} WHERE 1=1{doc_where}"
+        active_q = f"SELECT COUNT(DISTINCT rr.code) FROM routing_records rr{doc_join} WHERE 1=1{status_filter}{doc_where}"
         active_codes = conn.execute(active_q, params).fetchone()[0]
 
         # Released count
-        released_q = f"SELECT {count_expr('cl_.doc_type')} FROM routing_records rr{doc_join} WHERE LOWER(rr.status) = 'released'{doc_where}"
+        released_q = f"SELECT {count_expr('cl_.doc_type')} FROM routing_records rr{doc_join} WHERE LOWER(rr.status) = 'released'{status_filter}{doc_where}"
         released_count = conn.execute(released_q, params).fetchone()[0]
 
         # For signature count
-        sig_q = f"SELECT {count_expr('cl_.doc_type')} FROM routing_records rr{doc_join} WHERE LOWER(rr.status) = 'for signature'{doc_where}"
+        sig_q = f"SELECT {count_expr('cl_.doc_type')} FROM routing_records rr{doc_join} WHERE LOWER(rr.status) = 'for signature'{status_filter}{doc_where}"
         for_signature_count = conn.execute(sig_q, params).fetchone()[0]
 
         # With corrections count
-        corr_q = f"SELECT {count_expr('cl_.doc_type')} FROM routing_records rr{doc_join} WHERE LOWER(rr.status) = 'with corrections'{doc_where}"
+        corr_q = f"SELECT {count_expr('cl_.doc_type')} FROM routing_records rr{doc_join} WHERE LOWER(rr.status) = 'with corrections'{status_filter}{doc_where}"
         with_corrections_count = conn.execute(corr_q, params).fetchone()[0]
 
         # Status breakdown
@@ -3305,14 +3306,14 @@ def dashboard_stats():
                 SELECT LOWER(rr.status) as status,
                        COUNT(DISTINCT rr.school_office || '|' || COALESCE(cl_.doc_type, '')) as cnt
                 FROM routing_records rr{doc_join}
-                WHERE 1=1{doc_where}
+                WHERE 1=1{status_filter}{doc_where}
                 GROUP BY LOWER(rr.status)
             """
         else:
             status_q = f"""
                 SELECT LOWER(rr.status) as status, COUNT(*) as cnt
                 FROM routing_records rr{doc_join}
-                WHERE 1=1{doc_where}
+                WHERE 1=1{status_filter}{doc_where}
                 GROUP BY LOWER(rr.status)
             """
         rows = conn.execute(status_q, params).fetchall()
@@ -3325,7 +3326,7 @@ def dashboard_stats():
                 SELECT COALESCE(cl_.doc_type, '') as doc_type,
                        COUNT(DISTINCT rr.school_office || '|' || COALESCE(cl_.doc_type, '')) as cnt
                 FROM routing_records rr{doc_join}
-                WHERE 1=1{doc_where}
+                WHERE 1=1{status_filter}{doc_where} AND cl_.doc_type IS NOT NULL AND cl_.doc_type != ''
                 GROUP BY cl_.doc_type
                 ORDER BY cnt DESC LIMIT 10
             """
@@ -3333,7 +3334,7 @@ def dashboard_stats():
             dt_q = f"""
                 SELECT COALESCE(cl_.doc_type, '') as doc_type, COUNT(*) as cnt
                 FROM routing_records rr{doc_join}
-                WHERE 1=1{doc_where}
+                WHERE 1=1{status_filter}{doc_where} AND cl_.doc_type IS NOT NULL AND cl_.doc_type != ''
                 GROUP BY cl_.doc_type
                 ORDER BY cnt DESC LIMIT 10
             """
@@ -3359,67 +3360,130 @@ def dashboard_stats():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # ─────────────────────────────────────────────
+#  RECEIVING OFFICES (for dashboard filter)
+# ─────────────────────────────────────────────
+@app.route('/api/get_receiving_offices', methods=['GET'])
+@require_login
+def get_receiving_offices():
+    """Return distinct non-empty receiving offices from all 10 columns."""
+    try:
+        conn = db_manager.get_db_connection()
+        parts = []
+        for i in range(1, 11):
+            parts.append(
+                f"SELECT receiving_office_{i} AS office FROM routing_records "
+                f"WHERE receiving_office_{i} IS NOT NULL AND receiving_office_{i} != ''"
+            )
+        sql = "SELECT DISTINCT TRIM(office) AS office FROM (" + " UNION ALL ".join(parts) + ") WHERE office IS NOT NULL AND office != '' ORDER BY office"
+        rows = conn.execute(sql).fetchall()
+        conn.close()
+        offices = [r['office'] for r in rows]
+        return jsonify({'status': 'success', 'offices': offices})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# ─────────────────────────────────────────────
 #  RECENT ACTIVITY
 # ─────────────────────────────────────────────
 @app.route('/api/recent_activity', methods=['GET'])
 @require_login
 def recent_activity():
     """Return the 10 most recently scanned codes with employee count and latest office.
-    Query params: doc_type — filter by document type, count_mode — 'rows' or 'schools'."""
+    Query params: doc_type — filter by document type, count_mode — 'rows' or 'schools',
+    last_office — filter by the last scanning office."""
     try:
         doc_type_filter = request.args.get('doc_type', '').strip()
         count_mode = request.args.get('count_mode', 'rows').strip()
+        last_office_filter = request.args.get('last_office', '').strip()
         is_schools = count_mode == 'schools'
         conn = db_manager.get_db_connection()
-        subqueries = []
-        for i in range(1, 11):
-            subqueries.append(
-                f"SELECT rr.code, rr.employee, rr.school_office AS origin_school, "
-                f"rr.receiving_office_{i} AS office, "
-                f"rr.timestamp_{i} AS ts "
-                f"FROM routing_records rr "
-                f"WHERE rr.receiving_office_{i} IS NOT NULL AND rr.receiving_office_{i} != ''"
-            )
-        union_sql = " UNION ALL ".join(subqueries)
+
+        # Build COALESCE chains to find the LAST (highest-index non-empty) scan per record
+        office_coalesce = "COALESCE(" + ", ".join(f"NULLIF(receiving_office_{i}, '')" for i in range(10, 0, -1)) + ")"
+        ts_coalesce = "COALESCE(" + ", ".join(f"NULLIF(timestamp_{i}, '')" for i in range(10, 0, -1)) + ")"
+
+        # Base subquery: each record's last scan info
+        last_scan_sql = f"""
+            SELECT code, employee, school_office,
+                   {office_coalesce} AS last_office,
+                   {ts_coalesce} AS last_timestamp
+            FROM routing_records
+            WHERE {office_coalesce} IS NOT NULL
+        """
+
         params = []
-        doc_where = ""
+        if last_office_filter:
+            last_scan_sql += f" AND {office_coalesce} = ?"
+            params.append(last_office_filter)
+
+        doc_where_inner = ""
+        doc_where_counts = ""
         if doc_type_filter:
-            doc_where = " AND cl.doc_type = ?"
+            doc_where_inner = " AND cl.doc_type = ?"
+            doc_where_counts = " AND cl2.doc_type = ?"
             params.append(doc_type_filter)
+            params.append(doc_type_filter)
+
+        # Use CTE + ROW_NUMBER to pick the single latest scan row per group,
+        # ensuring office, employee, and timestamp come from the same record.
         if is_schools:
-            group_sql = (
-                f"SELECT scans.origin_school, "
-                f"cl.doc_type, "
-                f"COUNT(DISTINCT scans.code) AS total_codes, "
-                f"MIN(scans.employee) AS first_employee, "
-                f"COUNT(DISTINCT scans.employee) AS total_employees, "
-                f"MAX(scans.office) AS office, "
-                f"MAX(scans.ts) AS last_timestamp "
-                f"FROM ({union_sql}) AS scans "
-                f"JOIN code_lookup cl ON scans.code = cl.code "
-                f"WHERE 1=1{doc_where} "
-                f"GROUP BY scans.origin_school, cl.doc_type "
-                f"ORDER BY last_timestamp DESC LIMIT 10"
-            )
+            group_sql = f"""
+                WITH last_scans AS ({last_scan_sql})
+                SELECT ranked.school_office, ranked.doc_type,
+                       counts.total_codes, ranked.employee AS first_employee,
+                       counts.total_employees, ranked.last_office AS office,
+                       ranked.last_timestamp
+                FROM (
+                    SELECT ls.school_office, cl.doc_type, ls.employee, ls.last_office, ls.last_timestamp,
+                           ROW_NUMBER() OVER (PARTITION BY ls.school_office, cl.doc_type ORDER BY ls.last_timestamp DESC) AS rn
+                    FROM last_scans ls
+                    JOIN code_lookup cl ON ls.code = cl.code
+                    WHERE 1=1 {doc_where_inner}
+                ) ranked
+                JOIN (
+                    SELECT ls2.school_office, cl2.doc_type,
+                           COUNT(DISTINCT ls2.code) AS total_codes,
+                           COUNT(DISTINCT ls2.employee) AS total_employees
+                    FROM last_scans ls2
+                    JOIN code_lookup cl2 ON ls2.code = cl2.code
+                    WHERE 1=1 {doc_where_counts}
+                    GROUP BY ls2.school_office, cl2.doc_type
+                ) counts ON counts.school_office = ranked.school_office AND counts.doc_type = ranked.doc_type
+                WHERE ranked.rn = 1
+                ORDER BY ranked.last_timestamp DESC LIMIT 10
+            """
         else:
-            group_sql = (
-                f"SELECT scans.code, "
-                f"MIN(scans.employee) AS first_employee, "
-                f"COUNT(DISTINCT scans.employee) AS total_employees, "
-                f"MIN(scans.origin_school) AS origin_school, "
-                f"MAX(scans.office) AS office, "
-                f"MAX(scans.ts) AS last_timestamp "
-                f"FROM ({union_sql}) AS scans "
-                f"JOIN code_lookup cl ON scans.code = cl.code "
-                f"WHERE 1=1{doc_where} "
-                f"GROUP BY scans.code "
-                f"ORDER BY last_timestamp DESC LIMIT 10"
-            )
+            group_sql = f"""
+                WITH last_scans AS ({last_scan_sql})
+                SELECT ranked.code,
+                       ranked.employee AS first_employee,
+                       counts.total_employees,
+                       ranked.school_office AS origin_school,
+                       ranked.last_office AS office,
+                       ranked.last_timestamp
+                FROM (
+                    SELECT ls.code, ls.employee, ls.school_office, ls.last_office, ls.last_timestamp,
+                           ROW_NUMBER() OVER (PARTITION BY ls.code ORDER BY ls.last_timestamp DESC) AS rn
+                    FROM last_scans ls
+                    JOIN code_lookup cl ON ls.code = cl.code
+                    WHERE 1=1 {doc_where_inner}
+                ) ranked
+                JOIN (
+                    SELECT ls2.code,
+                           COUNT(DISTINCT ls2.employee) AS total_employees
+                    FROM last_scans ls2
+                    JOIN code_lookup cl2 ON ls2.code = cl2.code
+                    WHERE 1=1 {doc_where_counts}
+                    GROUP BY ls2.code
+                ) counts ON counts.code = ranked.code
+                WHERE ranked.rn = 1
+                ORDER BY ranked.last_timestamp DESC LIMIT 10
+            """
         rows = conn.execute(group_sql, params).fetchall()
         activities = []
         for row in rows:
             if is_schools:
-                school = row['origin_school'] or ''
+                school = row['school_office'] or ''
                 dt = row['doc_type'] or ''
                 group_label = (school + ' \\u2013 ' + dt) if dt else school
                 activities.append({

@@ -2139,10 +2139,6 @@
                 </div>
             </div>
             <div class="dashboard-filters">
-                <span class="filter-label">Doc Type:</span>
-                <select id="dashDocTypeFilter" onchange="reloadDashboard()">
-                    <option value="">All Types</option>
-                </select>
                 <div style="flex:1;"></div>
                 <span class="filter-label">Count Mode:</span>
                 <div class="count-mode-group">
@@ -2172,6 +2168,16 @@
                 <div class="card-title-row">
                     <div class="card-icon">🕐</div>
                     <h3 style="margin:0;">Recent Activity</h3>
+                </div>
+                <div class="dashboard-filters" style="margin-bottom:12px;">
+                    <span class="filter-label">Doc Type:</span>
+                    <select id="dashDocTypeFilter" onchange="fetchRecentActivity()">
+                        <option value="">All Types</option>
+                    </select>
+                    <span class="filter-label">Last Scanned At:</span>
+                    <select id="dashLastOfficeFilter" onchange="fetchRecentActivity()">
+                        <option value="">All Offices</option>
+                    </select>
                 </div>
                 <table class="recent-activity-table" id="recentActivityTable">
                     <thead>
@@ -2873,7 +2879,7 @@
     </div>
 
     <!-- Generic Confirmation Modal -->
-    <div id="confirmModal" class="maintenance-lock-overlay" style="display:none;">
+    <div id="confirmModal" class="maintenance-lock-overlay" style="display:none;position:fixed!important;">
         <div class="maintenance-lock-content" style="max-width:460px;">
             <div class="lock-icon" style="font-size:2.5rem;" id="confirmModalIcon">⚠️</div>
             <h2 id="confirmModalTitle">Are you sure?</h2>
@@ -2886,7 +2892,7 @@
     </div>
 
     <!-- Global loading overlay with progress bar -->
-    <div id="globalLoadingOverlay" class="maintenance-lock-overlay" style="display:none;z-index:10000;">
+    <div id="globalLoadingOverlay" class="maintenance-lock-overlay" style="display:none;z-index:10000;position:fixed!important;">
         <div class="maintenance-lock-content" style="max-width:440px;">
             <div class="lock-icon" style="font-size:2rem;" id="loadingIcon">🔄</div>
             <h2 id="loadingMessage" style="margin-bottom:6px;">Processing...</h2>
@@ -3559,14 +3565,10 @@
         }
 
         // ── DASHBOARD STATS ──
-        var _dashDocType = '';
         var _dashCountMode = 'schools';
 
         function loadDashboardStats() {
-            var dt = document.getElementById('dashDocTypeFilter');
-            _dashDocType = dt ? dt.value : '';
             var params = '?count_mode=' + _dashCountMode;
-            if (_dashDocType) params += '&doc_type=' + encodeURIComponent(_dashDocType);
             fetch('/api/dashboard_stats' + params)
             .then(function(r) { return r.json(); })
             .then(function(data) {
@@ -3580,7 +3582,28 @@
                 populateDocTypeFilter(data.doc_type_breakdown || []);
             })
             .catch(function() {});
+            loadLastOfficeFilter();
             fetchRecentActivity();
+        }
+
+        function loadLastOfficeFilter() {
+            var sel = document.getElementById('dashLastOfficeFilter');
+            if (!sel) return;
+            var current = sel.value;
+            fetch('/api/get_receiving_offices')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.status !== 'success') return;
+                sel.innerHTML = '<option value="">All Offices</option>';
+                (data.offices || []).forEach(function(o) {
+                    var opt = document.createElement('option');
+                    opt.value = o;
+                    opt.textContent = o;
+                    sel.appendChild(opt);
+                });
+                sel.value = current;
+            })
+            .catch(function() {});
         }
 
         function populateDocTypeFilter(breakdown) {
@@ -3611,7 +3634,10 @@
 
         function fetchRecentActivity() {
             var url = '/api/recent_activity?count_mode=' + encodeURIComponent(_dashCountMode);
-            if (_dashDocType) url += '&doc_type=' + encodeURIComponent(_dashDocType);
+            var dt = document.getElementById('dashDocTypeFilter');
+            if (dt && dt.value) url += '&doc_type=' + encodeURIComponent(dt.value);
+            var lo = document.getElementById('dashLastOfficeFilter');
+            if (lo && lo.value) url += '&last_office=' + encodeURIComponent(lo.value);
             fetch(url)
             .then(function(r) { return r.json(); })
             .then(function(data) {

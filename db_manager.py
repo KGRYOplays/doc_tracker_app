@@ -634,9 +634,9 @@ def save_setting(key, value):
 # ---- MASTER DATA HELPERS (replaces master_db.xlsx dependency) ----
 
 def get_all_departments():
-    """Return sorted list of unique departments from master_data."""
+    """Return sorted list of unique departments from schools table."""
     conn = get_db_connection()
-    rows = conn.execute("SELECT DISTINCT department FROM master_data ORDER BY department").fetchall()
+    rows = conn.execute("SELECT DISTINCT department FROM schools WHERE department IS NOT NULL AND department != '' ORDER BY department").fetchall()
     conn.close()
     return [r['department'] for r in rows]
 
@@ -645,11 +645,11 @@ def get_schools_for_department(department):
     """Return sorted list of unique schools for a given department."""
     conn = get_db_connection()
     rows = conn.execute(
-        "SELECT DISTINCT school_office FROM master_data WHERE department = ? ORDER BY school_office",
+        "SELECT name FROM schools WHERE department = ? AND name IS NOT NULL AND name != '' ORDER BY name",
         (department,)
     ).fetchall()
     conn.close()
-    return [r['school_office'] for r in rows]
+    return [r['name'] for r in rows]
 
 
 def get_employees_for_school(department, school):
@@ -657,14 +657,14 @@ def get_employees_for_school(department, school):
     Names are normalized and deduplicated to prevent format duplicates."""
     conn = get_db_connection()
     rows = conn.execute(
-        "SELECT DISTINCT employee_name FROM master_data WHERE department = ? AND school_office = ?",
+        "SELECT e.name FROM employees e JOIN schools s ON e.school_id = s.id WHERE s.department = ? AND s.name = ? ORDER BY e.name",
         (department, school)
     ).fetchall()
     conn.close()
     seen = set()
     unique = []
     for r in rows:
-        norm = reorder_name(r['employee_name'])
+        norm = reorder_name(r['name'])
         norm_key = normalize_name_str(norm)
         if norm_key not in seen:
             seen.add(norm_key)
@@ -676,9 +676,9 @@ def get_employees_for_school(department, school):
 def get_all_schools():
     """Return sorted list of all unique schools/offices across all departments."""
     conn = get_db_connection()
-    rows = conn.execute("SELECT DISTINCT school_office FROM master_data ORDER BY school_office").fetchall()
+    rows = conn.execute("SELECT name FROM schools WHERE name IS NOT NULL AND name != '' ORDER BY name").fetchall()
     conn.close()
-    return [r['school_office'] for r in rows]
+    return [r['name'] for r in rows]
 
 
 def get_employees_by_school(school):
@@ -687,7 +687,7 @@ def get_employees_by_school(school):
     'LastName, FirstName' and 'FirstName LastName' from both appearing."""
     conn = get_db_connection()
     rows = conn.execute(
-        "SELECT DISTINCT employee_name FROM master_data WHERE school_office = ?",
+        "SELECT e.name FROM employees e JOIN schools s ON e.school_id = s.id WHERE s.name = ? ORDER BY e.name",
         (school,)
     ).fetchall()
     conn.close()
@@ -695,7 +695,7 @@ def get_employees_by_school(school):
     seen = set()
     unique = []
     for r in rows:
-        norm = reorder_name(r['employee_name'])
+        norm = reorder_name(r['name'])
         norm_key = normalize_name_str(norm)
         if norm_key not in seen:
             seen.add(norm_key)
@@ -716,10 +716,10 @@ def get_employees_with_suggestions(department, school):
     same_school = get_employees_for_school(department, school)
     same_school_set = {normalize_name_str(e) for e in same_school}
 
-    # Get all employees from master_data, excluding this school
+    # Get all employees from employees table, excluding this school
     conn = get_db_connection()
     rows = conn.execute(
-        "SELECT DISTINCT employee_name, school_office FROM master_data WHERE school_office != ?",
+        "SELECT e.name, s.name AS school_office FROM employees e JOIN schools s ON e.school_id = s.id WHERE s.name != ? ORDER BY e.name",
         (school,)
     ).fetchall()
     conn.close()
@@ -727,7 +727,7 @@ def get_employees_with_suggestions(department, school):
     other_schools = []
     seen = set()
     for r in rows:
-        norm = reorder_name(r['employee_name'])
+        norm = reorder_name(r['name'])
         norm_key = normalize_name_str(norm)
         if norm_key not in seen and norm_key not in same_school_set:
             seen.add(norm_key)
