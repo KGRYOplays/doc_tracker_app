@@ -4121,9 +4121,11 @@
                     queuedGenerations = [];
                     updateQueueDisplay();
                     showToast('success', 'Generated ' + data.count + ' code(s) successfully!');
+                    hideProgress();
                     loadRoutingRecords();
                 } else {
                     showToast('error', 'Batch generation failed: ' + data.message);
+                    hideProgress();
                 }
             })
             .catch(function() {
