@@ -1437,63 +1437,6 @@
             margin-bottom: 14px;
         }
 
-        /* ═══ PRINT SHEET ═══ */
-        .sheet-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 12px;
-            max-width: 700px;
-            margin: 25px auto 0;
-            padding: 16px;
-            background: rgba(255,255,255,0.03);
-            border-radius: var(--radius-md);
-            border: 1px dashed var(--glass-border);
-        }
-        .sheet-item {
-            background: white;
-            border: 1px solid #ddd;
-            border-radius: var(--radius-md);
-            padding: 10px;
-            text-align: center;
-            position: relative;
-            color: #0f172a;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 4px;
-        }
-        .sheet-images {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 4px;
-            width: 100%;
-        }
-        .sheet-images img.sheet-qr { max-height: 60px; width: auto; }
-        .sheet-images img.sheet-bc { max-height: 40px; width: auto; }
-        .sheet-school {
-            font-weight: 700;
-            font-size: 0.7rem;
-            word-break: break-word;
-            line-height: 1.2;
-            color: #0f172a;
-            max-width: 100%;
-        }
-        .sheet-remove {
-            position: absolute;
-            top: 4px; right: 4px;
-            background: var(--error);
-            color: white;
-            width: 20px; height: 20px;
-            border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 10px; cursor: pointer; font-weight: bold;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-            transition: transform 0.2s ease;
-        }
-        .sheet-remove:hover { transform: scale(1.1); }
-
         /* ═══ DATATABLE ═══ */
         .table-actions {
             display: flex;
@@ -1732,27 +1675,8 @@
         .school-status.valid { color: var(--success); }
         .school-status.invalid { color: var(--text-muted); }
 
-        /* ═══ PRINT ═══ */
         @media print {
-            body * { visibility: hidden; }
-            .sheet-grid, .sheet-grid * { visibility: visible; }
-            .sheet-grid {
-                position: absolute;
-                left: 0; top: 0;
-                width: 100%;
-                display: grid !important;
-                grid-template-columns: repeat(2, 1fr);
-                gap: 15px;
-                padding: 15px;
-                background: white;
-            }
-            .sheet-item {
-                border: 2px solid black !important;
-                page-break-inside: avoid;
-                background: white !important;
-                box-shadow: none !important;
-            }
-            .sheet-remove, .no-print { display: none !important; }
+            .no-print { display: none !important; }
         }
         /* ═══ SCANNER TAB CSS ═══ */
         .scanner-tab-buttons { display:flex; gap:10px; margin-bottom:25px; }
@@ -2259,15 +2183,7 @@
                         <input type="text" id="docType" placeholder="e.g. Service Records, Contract, Clearance">
                     </div>
                     <div style="display:flex; gap:8px; margin-top:10px;">
-                        <button class="btn btn-primary" id="queueBtn" onclick="queueGeneration()" style="flex:1;">➕ Queue Generation</button>
-                        <button class="btn btn-add-sheet" id="generateAllBtn" onclick="generateAllQueued()" style="flex:1; display:none;">⚡ Generate All (<span id="queueCount">0</span>)</button>
-                    </div>
-                    <div id="queue_list_container" style="display:none; margin-top:12px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                            <span style="color:var(--text-muted); font-size:0.85rem;">Queued Generations</span>
-                            <button class="btn btn-secondary" onclick="clearQueue()" style="padding:4px 10px; font-size:0.75rem;">🗑️ Clear Queue</button>
-                        </div>
-                        <ul id="queue_list" style="list-style:none; padding:0; margin:0;"></ul>
+                        <button class="btn btn-add-sheet" id="generateBtn" onclick="generateCodes()" style="flex:1;">⚡ Generate Code</button>
                     </div>
                     <div id="qr_result">
                         <div class="qr-success">🎉 Code Created Successfully!</div>
@@ -2283,13 +2199,8 @@
                         </div>
                         <p style="font-family:'JetBrains Mono', monospace; font-size:1.1rem; font-weight:700; margin-bottom:18px;" id="codeText"></p>
                         <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                            <button class="btn btn-add-sheet" onclick="addToPrintSheet()" style="flex:1;">➕ Add to Print Sheet</button>
                             <button class="btn btn-primary" onclick="downloadBarcodeOverlay()" style="flex:1;">🖨️ Print Overlay (QR + Barcode)</button>
                             <button class="btn btn-primary" onclick="printRoutingSlip(currentCode)" style="flex:1;">📄 Print Slip</button>
-                        </div>
-                        <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
-                            <button class="btn btn-primary" onclick="printSheet()" style="flex:1;">🖨️ Print Layout Sheet (<span id="sheetCountPrint">0</span>)</button>
-                            <button class="btn btn-secondary" onclick="clearSheet()" style="flex:1;">🗑️ Clear All</button>
                         </div>
                         <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
                             <select id="overlayPosition" style="flex:1; padding:10px; background:rgba(15,23,42,0.6); border:1px solid var(--glass-border); border-radius:var(--radius-md); color:var(--text-main);">
@@ -2311,15 +2222,6 @@
                             Opens the print dialog with a blank page (Legal size by default) and BOTH the QR code and barcode at your chosen corner position. Print this onto your already-printed document.
                         </p>
                     </div>
-                </div>
-            </div>
-            <div class="glass-card">
-                <div class="card-title-row">
-                    <div class="card-icon">🖨️</div>
-                    <h2>Barcode Print Sheet Layout (<span id="sheetCount">0</span> codes)</h2>
-                </div>
-                <div class="sheet-grid" id="sheetGrid">
-                    <div class="empty-list" style="grid-column: span 4; text-align:center;">No barcodes added to print sheet yet.</div>
                 </div>
             </div>
         </div>
@@ -3035,8 +2937,6 @@
 
     <script>
         var addedEmployees = [];
-        var queuedGenerations = [];
-        var printSheetData = [];
         var currentCode = '';
         var currentImage = '';
         var currentGenSchool = '';
@@ -4022,10 +3922,10 @@
         function removeFromList(idx) { addedEmployees.splice(idx, 1); updateListDisplay(); }
         function clearList() { addedEmployees = []; updateListDisplay(); }
 
-        // ── QUEUE GENERATION (for batch) ──
-        function queueGeneration() {
+        // ── BATCH CODE GENERATION ──
+        function generateCodes() {
             if (addedEmployees.length === 0) {
-                showToast('error', 'Your employee batch is empty. Add employees first!');
+                showToast('error', 'Add employees first!');
                 return;
             }
             var docType = document.getElementById('docType').value.trim();
@@ -4035,72 +3935,23 @@
             }
 
             var names = addedEmployees.map(e => e.name);
-            queuedGenerations.push({
+            var generations = [{
                 department: addedEmployees[0].department,
                 school: addedEmployees[0].school,
                 doc_type: docType,
-                employees: names,
-                employeeCount: names.length
-            });
+                employees: names
+            }];
 
-            document.getElementById('docType').value = '';
-            clearList();
-            updateQueueDisplay();
-            showToast('success', 'Generation queued! (' + queuedGenerations.length + ' total)');
-        }
-
-        function updateQueueDisplay() {
-            var container = document.getElementById('queue_list_container');
-            var list = document.getElementById('queue_list');
-            var count = document.getElementById('queueCount');
-            var btn = document.getElementById('generateAllBtn');
-
-            if (queuedGenerations.length === 0) {
-                container.style.display = 'none';
-                btn.style.display = 'none';
-                return;
-            }
-
-            container.style.display = 'block';
-            btn.style.display = 'block';
-            count.innerText = queuedGenerations.length;
-
-            list.innerHTML = '';
-            queuedGenerations.forEach(function(q, idx) {
-                var li = document.createElement('li');
-                li.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:8px 12px; margin-bottom:6px; background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.15); border-radius:8px; font-size:0.85rem;';
-                li.innerHTML = '<div><span style="color:var(--text-muted);">#' + (idx + 1) + '</span> <strong>' + q.school + '</strong> — ' + q.doc_type + ' <span class="count-badge" style="font-size:0.75rem; padding:2px 8px;">' + q.employeeCount + ' emp.</span></div><span class="remove-btn" onclick="removeFromQueue(' + idx + ')" style="cursor:pointer; opacity:0.6;">✖</span>';
-                list.appendChild(li);
-            });
-        }
-
-        function removeFromQueue(idx) {
-            queuedGenerations.splice(idx, 1);
-            updateQueueDisplay();
-        }
-
-        function clearQueue() {
-            queuedGenerations = [];
-            updateQueueDisplay();
-        }
-
-        // ── BATCH CODE GENERATION ──
-        function generateAllQueued() {
-            if (queuedGenerations.length === 0) {
-                showToast('error', 'No queued generations. Add and queue generations first!');
-                return;
-            }
-
-            var btn = document.getElementById('generateAllBtn');
+            var btn = document.getElementById('generateBtn');
             setButtonLoading(btn, true);
 
-            showProgress('📦', 'Generating batch codes...', 'Processing ' + queuedGenerations.length + ' code(s).');
+            showProgress('📦', 'Generating code...', 'Processing ' + names.length + ' employee(s).');
             startSimulatedProgress(90);
 
             fetch('/api/generate_batch', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ generations: queuedGenerations })
+                body: JSON.stringify({ generations: generations })
             })
             .then(res => res.json())
             .then(function(data) {
@@ -4115,16 +3966,16 @@
                         currentGenSchool = last.school;
                         document.getElementById('codeImageQR').src = last.qr_image_url || last.image_url;
                         document.getElementById('codeImageBarcode').src = last.barcode_image_url || last.image_url;
-                        document.getElementById('codeText').innerText = 'CODE: ' + last.code + ' (last of ' + data.count + ')';
+                        document.getElementById('codeText').innerText = 'CODE: ' + last.code;
                         document.getElementById('qr_result').classList.add('active');
                     }
-                    queuedGenerations = [];
-                    updateQueueDisplay();
-                    showToast('success', 'Generated ' + data.count + ' code(s) successfully!');
+                    document.getElementById('docType').value = '';
+                    clearList();
+                    showToast('success', 'Code generated successfully!');
                     hideProgress();
                     loadRoutingRecords();
                 } else {
-                    showToast('error', 'Batch generation failed: ' + data.message);
+                    showToast('error', 'Code generation failed: ' + data.message);
                     hideProgress();
                 }
             })
@@ -4132,7 +3983,7 @@
                 stopSimulatedProgress();
                 hideProgress()
                 setButtonLoading(btn, false);
-                showToast('error', 'Network error during batch generation.');
+                showToast('error', 'Network error during code generation.');
             });
         }
 
@@ -4155,88 +4006,7 @@
             printWindow.focus();
         }
 
-        // ── SHORTEN SCHOOL NAME ──
-        function shortenSchoolName(name) {
-            if (!name) return '';
-            var n = name.trim();
-            n = n.replace(/\s*HIGH\s*SCHOOL\s*\(SHS\)\s*$/i, ' SHS');
-            n = n.replace(/\s*HIGH\s*SCHOOL\s*$/i, ' JHS');
-            n = n.replace(/\s*ELEMENTARY\s*SCHOOL\s*$/i, ' ES');
-            return n;
-        }
-
-        // ── PRINT SHEET ──
-        function addToPrintSheet() {
-            if (!currentCode) return;
-            var qrSrc = document.getElementById('codeImageQR').src;
-            var bcSrc = document.getElementById('codeImageBarcode').src;
-            if (printSheetData.some(p => p.code === currentCode)) { showToast('info', 'This barcode is already on the print layout.'); return; }
-            printSheetData.push({ code: currentCode, school: currentGenSchool, qrImage: qrSrc, barcodeImage: bcSrc });
-            updateSheetDisplay();
-            document.getElementById('qr_result').classList.remove('active');
-            currentCode = '';
-            currentImage = '';
-            currentGenSchool = '';
-            showToast('success', 'Added to Print Sheet.');
-        }
-
-        function updateSheetDisplay() {
-            var grid = document.getElementById('sheetGrid');
-            document.getElementById('sheetCount').innerText = printSheetData.length;
-            var printCount = document.getElementById('sheetCountPrint');
-            if (printCount) printCount.textContent = printSheetData.length;
-            if (printSheetData.length === 0) {
-                grid.innerHTML = '<div class="empty-list" style="grid-column: span 4; text-align:center;">No barcodes added to print sheet yet.</div>';
-                return;
-            }
-            grid.innerHTML = '';
-            printSheetData.forEach((item, index) => {
-                var div = document.createElement('div');
-                div.className = 'sheet-item';
-                var schoolName = shortenSchoolName(item.school);
-                div.innerHTML = '<div class="sheet-images"><img class="sheet-qr" src="' + item.qrImage + '"><img class="sheet-bc" src="' + item.barcodeImage + '"></div>' +
-                    '<div class="sheet-school">' + schoolName + '</div><span class="sheet-remove" onclick="removeFromSheet(' + index + ')">✖</span>';
-                grid.appendChild(div);
-            });
-        }
-
-        function removeFromSheet(index) { printSheetData.splice(index, 1); updateSheetDisplay(); }
-        function clearSheet() { printSheetData = []; updateSheetDisplay(); }
-
-        function printSheet() {
-            if (printSheetData.length === 0) { showToast('error', 'Add barcodes to print sheet layout first!'); return; }
-            var printContent = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Print Barcodes</title><style>' +
-                'body{margin:0;font-family:Arial,sans-serif;}' +
-                '.page{width:8.5in;min-height:13in;padding:0.2in;box-sizing:border-box;page-break-after:always;}' +
-                '.page-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:0.12in;height:100%;align-content:start;}' +
-                '.cell{border:1.5px solid #333;border-radius:4px;padding:0.1in;text-align:center;page-break-inside:avoid;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:2in;}' +
-                '.cell img.cell-qr{max-height:0.85in;width:auto;margin-bottom:2px;}' +
-                '.cell img.cell-bc{max-height:0.55in;width:auto;margin-bottom:2px;}' +
-                '.cell .school-label{font-weight:600;font-size:7pt;word-break:break-word;line-height:1.15;max-width:100%;}' +
-                '@media print{@page{size:legal;margin:0;}body{margin:0;}}' +
-                '</style></head><body>';
-
-            var itemsPerPage = 20;
-            for (var p = 0; p < printSheetData.length; p += itemsPerPage) {
-                printContent += '<div class="page"><div class="page-grid">';
-                var pageItems = printSheetData.slice(p, p + itemsPerPage);
-                pageItems.forEach(function(item) {
-                    var qr = item.qrImage.startsWith('http') ? item.qrImage : window.location.origin + item.qrImage;
-                    var bc = item.barcodeImage.startsWith('http') ? item.barcodeImage : window.location.origin + item.barcodeImage;
-                    var schoolName = shortenSchoolName(item.school);
-                    printContent += '<div class="cell"><img class="cell-qr" src="' + qr + '"><img class="cell-bc" src="' + bc + '"><div class="school-label">' + schoolName + '</div></div>';
-                });
-                printContent += '</div></div>';
-            }
-            printContent += '</body></html>';
-
-            var printWindow = window.open('', '_blank', 'width=800,height=600');
-            printWindow.document.write(printContent);
-            printWindow.document.close();
-            printWindow.focus();
-            printWindow.print();
-            setTimeout(function() { printWindow.close(); }, 1000);
-        }
+        // ── ROUTING DATATABLE ──
 
         // ── ROUTING DATATABLE ──
         var sortState = { column: 'last_activity', order: 'DESC' };

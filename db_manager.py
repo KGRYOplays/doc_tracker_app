@@ -870,8 +870,20 @@ def migrate_routing_employee_names():
 
 
 # --- REAL-TIME EXCEL EXPORT ---
+_last_export_time = 0
+_EXPORT_DEBOUNCE_SECS = 30
+_EXPORT_PAGE_SIZE = 5000
+
 def trigger_excel_export():
-    """Export SQLite data to local Excel files via openpyxl (no pandas in hot path)."""
+    """Export SQLite data to local Excel files via openpyxl (no pandas in hot path).
+    Debounced: skips if last export was < 30s ago.
+    Paginated: processes routing records in pages of 5000 to limit memory."""
+    global _last_export_time
+    now = time.time()
+    if now - _last_export_time < _EXPORT_DEBOUNCE_SECS:
+        return
+    _last_export_time = now
+
     def _export():
         try:
             from openpyxl import Workbook
@@ -892,7 +904,7 @@ def trigger_excel_export():
                            row['employees'], row['doc_type'], row['generated_at']])
             wb.save(CODE_LOOKUP_EXCEL)
 
-            # ── Routing Records ──
+            # ── Routing Records (paginated) ──
             cur.execute("PRAGMA table_info(routing_records)")
             cols = [r[1] for r in cur.fetchall()]
             stages = sorted(set(
@@ -912,18 +924,29 @@ def trigger_excel_export():
             ws2.title = "Routing Records"
             ws2.append(header)
 
-            cur.execute("SELECT * FROM routing_records ORDER BY id DESC")
-            for row in cur:
-                r = dict(row)
-                vals = [r['department'], r['school_office'], r['employee'],
-                        r['code'], r.get('doc_type', '') or '',
-                        r.get('remarks', '') or '']
-                for i in stages:
-                    vals.append(r.get(f'receiving_office_{i}', '') or '')
-                    if f"receiver_name_{i}" in cols:
-                        vals.append(r.get(f'receiver_name_{i}', '') or '')
-                    vals.append(r.get(f'timestamp_{i}', '') or '')
-                ws2.append(vals)
+            offset = 0
+            while True:
+                cur.execute(
+                    "SELECT department, school_office, employee, code, doc_type, remarks, "
+                    + ", ".join(f"receiving_office_{s}, receiver_name_{s}, timestamp_{s}" for s in stages)
+                    + f" FROM routing_records ORDER BY id DESC LIMIT {_EXPORT_PAGE_SIZE} OFFSET ?",
+                    (offset,)
+                )
+                page = cur.fetchall()
+                if not page:
+                    break
+                for row in page:
+                    r = dict(row)
+                    vals = [r['department'], r['school_office'], r['employee'],
+                            r['code'], r.get('doc_type', '') or '',
+                            r.get('remarks', '') or '']
+                    for i in stages:
+                        vals.append(r.get(f'receiving_office_{i}', '') or '')
+                        if f"receiver_name_{i}" in cols:
+                            vals.append(r.get(f'receiver_name_{i}', '') or '')
+                        vals.append(r.get(f'timestamp_{i}', '') or '')
+                    ws2.append(vals)
+                offset += _EXPORT_PAGE_SIZE
 
             wb2.save(ROUTING_RECORD_EXCEL)
             conn.close()
@@ -1721,7 +1744,7 @@ def start_periodic_gsheets_pull():
     Uses a short-sleep loop so the timer can be reset externally (e.g. after
     maintenance mode ends) without waiting for the full interval to elapse.
     """
-    DEFAULT_INTERVAL = 1
+    DEFAULT_INTERVAL = 15
 
     def _worker():
         global _periodic_last_run

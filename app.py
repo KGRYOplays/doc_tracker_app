@@ -54,6 +54,11 @@ if not db_manager.get_setting('logo_url', ''):
 # Serialize concurrent scan writes so SELECT → INSERT/UPDATE is atomic
 scan_lock = threading.Lock()
 
+# Dashboard stats cache (reduces repeated full-table scans)
+_stats_cache = {}
+_stats_cache_lock = threading.Lock()
+_STATS_CACHE_TTL = 20
+
 # ── Graceful shutdown: drain GSheets sync queue before exit ──
 import signal as _signal
 import atexit as _atexit
@@ -247,7 +252,7 @@ def save_code_lookup_batch(code_dicts):
 
 def get_code_lookup(code):
     conn = db_manager.get_db_connection()
-    row = conn.execute("SELECT * FROM code_lookup WHERE code = ?", (code,)).fetchone()
+    row = conn.execute("SELECT code, department, school_office, doc_type, employees, generated_at FROM code_lookup WHERE code = ?", (code,)).fetchone()
     if not row:
         conn.close()
         return None
@@ -283,10 +288,10 @@ def get_code_lookup(code):
 #  BARCODE / LABEL GENERATION HELPERS
 # ─────────────────────────────────────────────
 def generate_barcode_image(code):
-    """Generate a barcode PIL image, 1.5 in wide x 0.75 in tall at 300 DPI."""
+    """Generate a barcode PIL image, 1.5 in wide x 0.75 in tall at 200 DPI."""
     from barcode import Code128
     from barcode.writer import ImageWriter
-    DPI = 300
+    DPI = 200
     target_w = int(1.5 * DPI)
     target_h = int(0.75 * DPI)
 
@@ -330,12 +335,12 @@ def generate_barcode_image(code):
 
 
 def generate_qr_image(code):
-    """Generate a QR code PIL image, 1.5 in x 1.5 in square at 300 DPI."""
+    """Generate a QR code PIL image, 1.5 in x 1.5 in square at 200 DPI."""
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
     qr.add_data(code)
     qr.make(fit=True)
     img = qr.make_image(fill="black", back_color="white").convert('RGB')
-    DPI = 300
+    DPI = 200
     target = int(1.5 * DPI)
     img = img.resize((target, target), Image.LANCZOS)
 
@@ -360,85 +365,7 @@ def generate_qr_image(code):
     return boxed
 
 
-def create_label_pdf(codes, dpi=300):
-    """
-    Create a PDF with 4 columns x 5 rows of combined QR + barcode labels
-    on 8.5 x 13 (Legal) paper. Each cell shows the QR (1.5" sq) on top
-    and the Code128 barcode (1.5" x 0.75") below.
-    """
-    from reportlab.lib.pagesizes import legal
-    from reportlab.lib.units import inch
-    from reportlab.lib.utils import ImageReader
-    from reportlab.pdfgen import canvas
 
-    PAGE_W, PAGE_H = legal  # 8.5 x 13 in points
-    COLS, ROWS = 4, 5
-    MARGIN = 0.4 * inch
-    GAP = 0.15 * inch
-
-    usable_w = PAGE_W - 2 * MARGIN
-    usable_h = PAGE_H - 2 * MARGIN
-    cell_w = (usable_w - (COLS - 1) * GAP) / COLS
-    cell_h = (usable_h - (ROWS - 1) * GAP) / ROWS
-    pad_x = (usable_w - (COLS * cell_w + (COLS - 1) * GAP)) / 2
-    pad_y = (usable_h - (ROWS * cell_h + (ROWS - 1) * GAP)) / 2
-
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=legal)
-
-    for idx, item in enumerate(codes):
-        code = item.get('code', '')
-
-        if idx > 0 and idx % (COLS * ROWS) == 0:
-            c.showPage()
-
-        pos = idx % (COLS * ROWS)
-        col = pos % COLS
-        row = pos // COLS
-
-        cx = MARGIN + pad_x + col * (cell_w + GAP)
-        cy = MARGIN + pad_y + row * (cell_h + GAP)
-
-        qr_pil = generate_qr_image(code)
-        bc_pil = generate_barcode_image(code)
-
-        # Scale QR to fit in upper ~60% of cell
-        qr_max_w = cell_w * 0.85
-        qr_max_h = cell_h * 0.55
-        qr_scale = min(qr_max_w / qr_pil.width, qr_max_h / qr_pil.height)
-        qr_disp_w = qr_pil.width * qr_scale
-        qr_disp_h = qr_pil.height * qr_scale
-        qr_x = cx + (cell_w - qr_disp_w) / 2
-        qr_y = cy + cell_h * 0.42 + (cell_h * 0.58 - qr_disp_h) / 2
-
-        # Scale barcode to fit in lower ~40% of cell
-        bc_max_w = cell_w * 0.85
-        bc_max_h = cell_h * 0.35
-        bc_scale = min(bc_max_w / bc_pil.width, bc_max_h / bc_pil.height)
-        bc_disp_w = bc_pil.width * bc_scale
-        bc_disp_h = bc_pil.height * bc_scale
-        bc_x = cx + (cell_w - bc_disp_w) / 2
-        bc_y = cy + (cell_h * 0.42 - bc_disp_h) / 2
-
-        def _draw(pil_img, x, y, w, h):
-            tmp = io.BytesIO()
-            pil_img.save(tmp, format='PNG')
-            tmp.seek(0)
-            c.drawImage(ImageReader(tmp), x, y, width=w, height=h)
-
-        _draw(qr_pil, qr_x, qr_y, qr_disp_w, qr_disp_h)
-        _draw(bc_pil, bc_x, bc_y, bc_disp_w, bc_disp_h)
-
-        # Dashed cell border
-        c.setStrokeColorRGB(0.7, 0.7, 0.7)
-        c.setLineWidth(0.5)
-        c.rect(cx, cy, cell_w, cell_h)
-        c.setStrokeColorRGB(0, 0, 0)
-        c.setLineWidth(1)
-
-    c.save()
-    buf.seek(0)
-    return buf
 
 
 def create_document_page_pdf(code):
@@ -1467,6 +1394,7 @@ def generate_code():
 #  BATCH CODE GENERATION
 # ─────────────────────────────────────────────
 @app.route('/api/generate_batch', methods=['POST'])
+@limiter.limit("5 per minute")
 @require_login
 def generate_batch():
     blocked, msg = _check_maintenance()
@@ -1601,30 +1529,6 @@ def document_page():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
-@app.route('/api/batch_labels', methods=['POST'])
-def batch_labels():
-    """
-    Generate a PDF for batch printing (QR + barcode per code).
-    Body: { "codes": [{"code": "..."}, ...] }
-    """
-    try:
-        data = request.json
-        codes = data.get('codes', [])
-        
-        if not codes:
-            return jsonify({'status': 'error', 'message': 'No codes provided.'}), 400
-        
-        pdf_buf = create_label_pdf(codes)
-        return send_file(
-            pdf_buf,
-            mimetype='application/pdf',
-            as_attachment=True,
-            download_name='barcode_labels.pdf'
-        )
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-
 @app.route('/api/barcode_overlay', methods=['POST'])
 def barcode_overlay():
     """
@@ -1686,10 +1590,13 @@ def log_scan():
     current_ts       = datetime.now().strftime("%m/%d/%Y")
     updated_rows_ids = []
     slot_updated     = 1
+    expected_count   = len(employees)
 
     with scan_lock:
+        conn = None
         try:
             conn = db_manager.get_db_connection()
+            conn.execute("BEGIN IMMEDIATE TRANSACTION")
 
             # ── 1. ACCIDENTAL DOUBLE-SCAN CHECK ──────────────────────────────────
             for emp in employees:
@@ -1715,14 +1622,15 @@ def log_scan():
 
                     if (latest_office and latest_office.strip().lower() == receiving_office.lower() and 
                         latest_receiver and latest_receiver.strip().lower() == receiver_name.lower()):
+                        conn.execute("ROLLBACK")
                         conn.close()
+                        conn = None
                         return jsonify({
                             'status':  'warning',
                             'message': f'Duplicate scan! Already received at "{latest_office}" by "{latest_receiver}" on {latest_ts}.'
                         })
 
             # ── 2. LOG THE ROUTING STAMP ──────────────────────────────────────────
-            # Resolve employee IDs once
             emp_id_map = {}
             emp_ids_list = _resolve_employee_ids(conn, employees, lookup['school'])
             for name, eid in emp_ids_list:
@@ -1744,7 +1652,6 @@ def log_scan():
                         (lookup['department'], lookup['school'], emp, emp_id, code,
                          receiving_office, receiver_name, current_ts)
                     )
-                    conn.commit()
                     updated_rows_ids.append(cursor.lastrowid)
                     slot_updated = 1
 
@@ -1773,12 +1680,9 @@ def log_scan():
                         f"WHERE id=?",
                         (receiving_office, receiver_name, current_ts, record_id)
                     )
-                    conn.commit()
                     updated_rows_ids.append(record_id)
                     slot_updated = empty_slot
 
-                # Auto-set status to 'released' when scanned at RECORDS SERVICES
-                # unless admin manually set it to 'with corrections'
                 if receiving_office.strip().upper() == 'RECORDS SERVICES':
                     prev_status = row['status'] if row else ''
                     if prev_status != 'with corrections':
@@ -1787,11 +1691,31 @@ def log_scan():
                             "WHERE code = ? AND employee = ?",
                             (code, emp)
                         )
-                        conn.commit()
 
-            conn.close()
+            # Verify all employees were processed
+            if len(updated_rows_ids) != expected_count:
+                conn.execute("ROLLBACK")
+                conn.close()
+                conn = None
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Scan aborted: only {len(updated_rows_ids)} of {expected_count} employees processed. No records saved.'
+                })
+
+            conn.execute("COMMIT")
         except Exception as e:
+            if conn:
+                try:
+                    conn.execute("ROLLBACK")
+                except Exception:
+                    pass
             return jsonify({'status': 'error', 'message': str(e)})
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     # ── Post-processing (no lock needed) ──────────────────────────────────
     if updated_rows_ids:
@@ -3243,6 +3167,7 @@ def migrate_master_to_gsheets():
 #  DASHBOARD STATS
 # ─────────────────────────────────────────────
 @app.route('/api/dashboard_stats', methods=['GET'])
+@limiter.limit("10 per minute")
 @require_login
 def dashboard_stats():
     """Return dashboard statistics. Query params:
@@ -3252,6 +3177,13 @@ def dashboard_stats():
         doc_type_filter = request.args.get('doc_type', '').strip()
         count_mode = request.args.get('count_mode', 'schools').strip()
         is_schools = count_mode == 'schools'
+
+        cache_key = (doc_type_filter, count_mode)
+        now = time.time()
+        with _stats_cache_lock:
+            cached = _stats_cache.get(cache_key)
+            if cached and (now - cached['ts']) < _STATS_CACHE_TTL:
+                return jsonify(cached['data'])
 
         conn = db_manager.get_db_connection()
 
@@ -3345,7 +3277,7 @@ def dashboard_stats():
             doc_type_breakdown.append({'label': label, 'count': row['cnt']})
 
         conn.close()
-        return jsonify({
+        result_data = {
             'status': 'success',
             'unique_barcodes': unique_barcodes,
             'total_employees': total_employees,
@@ -3355,7 +3287,10 @@ def dashboard_stats():
             'with_corrections_count': with_corrections_count,
             'status_breakdown': status_breakdown,
             'doc_type_breakdown': doc_type_breakdown
-        })
+        }
+        with _stats_cache_lock:
+            _stats_cache[cache_key] = {'ts': time.time(), 'data': result_data}
+        return jsonify(result_data)
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
